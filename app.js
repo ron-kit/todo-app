@@ -6,9 +6,10 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 // Muted take on the 16 HTML colors (black/gray/silver/white become slate tones).
 const COLORS = [
-  '#a8636a', '#d17f7a', '#8b6a9e', '#c488b5', '#6f9a74', '#a3c27a', '#a39b5e', '#dcc874',
-  '#5f6f9e', '#7a9bd0', '#5f9a9a', '#86c4c8', '#4a4f57', '#7d838c', '#b3b8bf', '#d9d6cf',
+  '#d49aa2', '#e6a3a0', '#b9a0cc', '#d8a6cb', '#9fcba6', '#c3dc9f', '#c9c28c', '#ecdc9c',
+  '#94a5d1', '#9fc0e8', '#8fcbc8', '#a9dce0', '#8a909b', '#a2a8b1', '#c8ccd2', '#e8e6e1',
 ];
+const ADD = '__add'; // the "new category" pseudo-tile in the layout
 const ICON = {
   x: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
   copy: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M2.5 10.5V4.3c0-1 .8-1.8 1.8-1.8h6.2"/></svg>',
@@ -21,7 +22,7 @@ const ICON = {
 
 /* ================= state ================= */
 const DEFAULTS = () => ({
-  settings: { open: 'daily', weekStart: 'mon', disableWeekends: false, switcher: 'tabs' },
+  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', bg: { type: 'default' } },
   daily: { tasks: [], checks: {} },
   todo: { cats: [], layout: null },
 });
@@ -47,6 +48,7 @@ function load() {
     }
   } catch { /* fresh state */ }
   normalizeLayout(d.todo);
+  d.daily.tasks.forEach((t, i) => { if (!t.color) t.color = pickTaskColor(d.daily.tasks, i); });
   return d;
 }
 function save() {
@@ -76,6 +78,31 @@ function h(tag, props, ...kids) {
   return el;
 }
 
+function pickTaskColor(tasks, index) {
+  // Unique colors while there is room; past 16 tasks, only avoid the neighbours.
+  const others = tasks.filter((_, i) => i !== index);
+  let pool = COLORS.filter((c) => !others.some((t) => t.color === c));
+  if (!pool.length) {
+    const near = [tasks[index - 1]?.color, tasks[index + 1]?.color];
+    pool = COLORS.filter((c) => !near.includes(c));
+  }
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+function desat(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  let [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  let hh = 0, ss = 0;
+  if (d) {
+    ss = d / (1 - Math.abs(2 * l - 1));
+    hh = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  }
+  ss *= f;
+  const c = (1 - Math.abs(2 * l - 1)) * ss, x = c * (1 - Math.abs((hh % 2) - 1)), m = l - c / 2;
+  [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(hh) % 6].map((v) => Math.round((v + m) * 255));
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+const BG_COLORS = COLORS.map((c) => desat(c, 0.35));
 const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 function fmtDate(v) {
   const d = new Date(v);
@@ -84,7 +111,7 @@ function fmtDate(v) {
 function textOn(hex) {
   const n = parseInt(hex.slice(1), 16);
   const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-  return lum > 0.68 ? '#26282c' : '#ffffff';
+  return lum > 0.5 ? '#26282c' : '#ffffff';
 }
 
 /* ================= typesetting: markdown-lite + LaTeX (KaTeX) ================= */
@@ -169,16 +196,17 @@ function renderDaily() {
     state.daily.tasks.map((t) => (ui.editor?.kind === 'daily' && ui.editor.id === t.id ? dailyEditorRow(cols) : dailyRow(t, cols))),
     ui.editor?.kind === 'daily' && ui.editor.id === 'new'
       ? dailyEditorRow(cols)
-      : plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', draft: { name: '', days: Array(7).fill(false) }, apply(name) {
-        state.daily.tasks.push({ id: uid(), name, days: this.draft.days.slice() });
+      : plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', draft: { name: '', days: Array(7).fill(state.settings.allDays), color: pickTaskColor(state.daily.tasks, state.daily.tasks.length) }, apply(name) {
+        state.daily.tasks.push({ id: uid(), name, days: this.draft.days.slice(), color: this.draft.color });
       } })));
 
   root.replaceChildren(
     h('div', { class: 'wk' },
-      h('button', { class: 'ib big', title: 'Previous week', html: ICON.left, onclick: () => { ui.weekOffset--; render(); } }),
-      h('span', { class: 'lbl' }, range),
-      h('button', { class: 'ib big', title: 'Next week', html: ICON.right, onclick: () => { ui.weekOffset++; render(); } }),
-      ui.weekOffset ? h('button', { class: 'today-btn', onclick: () => { ui.weekOffset = 0; render(); } }, 'This week') : null),
+      h('div', { class: 'wk-main' },
+        h('button', { class: 'ib big', title: 'Previous week', html: ICON.left, onclick: () => { ui.weekOffset--; render(); } }),
+        h('span', { class: 'lbl' }, range),
+        h('button', { class: 'ib big', title: 'Next week', html: ICON.right, onclick: () => { ui.weekOffset++; render(); } })),
+      h('button', { class: 'today-btn', style: { visibility: ui.weekOffset ? 'visible' : 'hidden' }, onclick: () => { ui.weekOffset = 0; render(); } }, 'This week')),
     grid);
 }
 
@@ -188,30 +216,30 @@ function dailyRow(t, cols) {
     class: 'dname',
     onclick: (e) => {
       if (e.target.closest('button')) return;
-      openEditor({ kind: 'daily', id: t.id, draft: { name: t.name, days: t.days.slice() }, apply(n) { t.name = n; t.days = this.draft.days.slice(); } });
+      openEditor({ kind: 'daily', id: t.id, draft: { name: t.name, days: t.days.slice(), color: t.color }, apply(n) { t.name = n; t.days = this.draft.days.slice(); t.color = this.draft.color; } });
     },
   },
   h('span', { class: 'ttl', html: renderText(t.name) }),
   actions(() => {
     const i = state.daily.tasks.indexOf(t);
-    state.daily.tasks.splice(i + 1, 0, { id: uid(), name: t.name, days: t.days.slice() });
+    const copy = { id: uid(), name: t.name, days: t.days.slice(), color: t.color };
+    state.daily.tasks.splice(i + 1, 0, copy);
+    copy.color = pickTaskColor(state.daily.tasks, i + 1);
     save(); render();
   }, () => {
     state.daily.tasks = state.daily.tasks.filter((x) => x !== t);
     delete state.daily.checks[t.id];
     save(); render();
   }));
-  return h('div', { class: 'drow' }, name, cols.map((c) => {
+  return h('div', { class: 'drow task', vars: { '--c': t.color, '--on': textOn(t.color) } }, name, cols.map((c) => {
     if (!t.days[c.dow]) return h('div', { class: 'dcell' });
-    const off = state.settings.disableWeekends && (c.dow === 0 || c.dow === 6);
     const box = checkbox(!!checks[c.iso], () => {
       const m = (state.daily.checks[t.id] ||= {});
       if (m[c.iso]) delete m[c.iso]; else m[c.iso] = true;
       box.classList.toggle('on', !!m[c.iso]);
       box.setAttribute('aria-pressed', String(!!m[c.iso]));
       save();
-    }, off ? 'dis' : '');
-    if (off) box.disabled = true;
+    });
     return h('div', { class: 'dcell' }, box);
   }));
 }
@@ -219,8 +247,19 @@ function dailyRow(t, cols) {
 function dailyEditorRow(cols) {
   const ed = ui.editor;
   const input = editorInput(ed.draft);
-  const row = h('div', { class: 'drow editor' },
-    h('div', { class: 'dname' }, input),
+  const dot = h('button', { class: 'dot', title: 'Highlight color', onclick: () => {
+    const open = row.querySelector('.palette');
+    if (open) { open.remove(); return; }
+    const pal = h('div', { class: 'palette' }, COLORS.map((c) => h('button', {
+      class: `swatch ${c === ed.draft.color ? 'sel' : ''}`, vars: { '--c': c },
+      onclick: () => { ed.draft.color = c; row.style.setProperty('--c', c); row.style.setProperty('--on', textOn(c)); pal.remove(); input.focus(); },
+    })));
+    nameCell.append(pal);
+  } });
+  dot.addEventListener('mousedown', keepFocus);
+  const nameCell = h('div', { class: 'dname' }, dot, input);
+  const row = h('div', { class: 'drow task editor', vars: { '--c': ed.draft.color, '--on': textOn(ed.draft.color) } },
+    nameCell,
     cols.map((c) => {
       const b = checkbox(ed.draft.days[c.dow], () => {
         ed.draft.days[c.dow] = !ed.draft.days[c.dow];
@@ -236,59 +275,61 @@ function dailyEditorRow(cols) {
 
 /* ================= TODO ================= */
 function normalizeLayout(todo) {
-  const ids = new Set(todo.cats.map((c) => c.id));
+  const ids = new Set([ADD, ...todo.cats.map((c) => c.id)]);
   const seen = new Set();
   const prune = (n) => {
     if (!n) return null;
     if (n.cat) return ids.has(n.cat) && !seen.has(n.cat) && seen.add(n.cat) ? n : null;
     const kids = [], ws = [];
     n.kids.forEach((k, i) => { const r = prune(k); if (r) { kids.push(r); ws.push(n.ws[i] || 1); } });
-    if (!kids.length) return null;
-    if (kids.length === 1) return kids[0];
-    return { dir: n.dir, kids, ws };
+    return tidy({ dir: n.dir, kids, ws });
   };
   todo.layout = prune(todo.layout);
-  for (const c of todo.cats) if (!seen.has(c.id)) appendLeaf(todo, c.id);
+  for (const id of ids) if (!seen.has(id)) todo.layout = todo.layout ? tidy({ dir: 'row', kids: [todo.layout, { cat: id }], ws: [1, 1] }) : { cat: id };
 }
-function appendLeaf(todo, id) {
-  const leaf = { cat: id }, t = todo.layout;
-  if (!t) todo.layout = leaf;
-  else if (t.dir === 'row') { t.ws.push(t.ws.reduce((a, b) => a + b, 0) / t.ws.length); t.kids.push(leaf); }
-  else todo.layout = { dir: 'row', kids: [t, leaf], ws: [1, 1] };
+// Collapse empty/single-child splits and merge same-direction nesting so every tile stays a clean rectangle.
+function tidy(n) {
+  if (!n || n.cat) return n;
+  const kids = [], ws = [];
+  n.kids.forEach((k, i) => {
+    k = tidy(k);
+    if (!k) return;
+    if (!k.cat && k.dir === n.dir) {
+      const sum = k.ws.reduce((a, b) => a + b, 0);
+      k.kids.forEach((kk, j) => { kids.push(kk); ws.push((n.ws[i] * k.ws[j]) / sum); });
+    } else { kids.push(k); ws.push(n.ws[i]); }
+  });
+  if (!kids.length) return null;
+  if (kids.length === 1) return kids[0];
+  return { dir: n.dir, kids, ws };
 }
 function removeLeaf(n, id) {
   if (!n) return null;
   if (n.cat) return n.cat === id ? null : n;
-  const kids = [], ws = [];
-  n.kids.forEach((k, i) => { const r = removeLeaf(k, id); if (r) { kids.push(r); ws.push(n.ws[i]); } });
-  if (!kids.length) return null;
-  if (kids.length === 1) return kids[0];
-  n.kids = kids; n.ws = ws;
-  return n;
+  n.kids.forEach((k, i) => { n.kids[i] = removeLeaf(k, id); });
+  const keep = n.kids.map((k) => !!k);
+  n.ws = n.ws.filter((_, i) => keep[i]);
+  n.kids = n.kids.filter(Boolean);
+  return tidy(n);
 }
 // Split the tile holding `target` and put `id` on the given side.
 function insertAt(root, target, id, zone) {
   const dir = zone === 'left' || zone === 'right' ? 'row' : 'col';
   const before = zone === 'left' || zone === 'top';
   const leaf = { cat: id };
-  let done = false;
-  const rec = (n, parent, idx) => {
-    if (n.cat) {
-      if (n.cat !== target) return n;
-      done = true;
-      if (parent && parent.dir === dir) {
-        const w = parent.ws[idx] / 2;
-        parent.ws[idx] = w;
-        const at = before ? idx : idx + 1;
-        parent.kids.splice(at, 0, leaf); parent.ws.splice(at, 0, w);
-        return n;
-      }
-      return { dir, kids: before ? [leaf, n] : [n, leaf], ws: [1, 1] };
+  const wrap = (n) => ({ dir, kids: before ? [leaf, n] : [n, leaf], ws: [1, 1] });
+  if (!root) return leaf;
+  if (root.cat) return root.cat === target ? tidy(wrap(root)) : root;
+  const rec = (n) => {
+    for (let i = 0; i < n.kids.length; i++) {
+      const k = n.kids[i];
+      if (k.cat === target) { n.kids[i] = wrap(k); return true; }
+      if (!k.cat && rec(k)) return true;
     }
-    for (let i = 0; i < n.kids.length && !done; i++) n.kids[i] = rec(n.kids[i], n, i);
-    return n;
+    return false;
   };
-  return rec(root, null, 0);
+  rec(root);
+  return tidy(root);
 }
 function swapLeaves(n, a, b) {
   if (n.cat) { if (n.cat === a) n.cat = b; else if (n.cat === b) n.cat = a; return; }
@@ -296,21 +337,15 @@ function swapLeaves(n, a, b) {
 }
 
 function renderTodo() {
-  const root = $('#todo');
-  const { cats, layout } = state.todo;
-  if (!cats.length) {
-    root.replaceChildren(h('div', { class: 'empty' }, h('button', { class: 'sq huge', title: 'New category', 'aria-label': 'New category', html: ICON.plus, onclick: () => catModal() })));
-    return;
-  }
-  const board = h('div', { class: 'board' }, renderNode(layout));
+  const board = h('div', { class: 'board' }, renderNode(state.todo.layout));
   board.addEventListener('dragleave', (e) => { if (!board.contains(e.relatedTarget)) hideOverlay(); });
   ui.board = board;
-  root.replaceChildren(
-    h('div', { class: 'todo-bar' }, h('button', { class: 'sq', title: 'New category', 'aria-label': 'New category', html: ICON.plus, onclick: () => catModal() })),
-    board);
+  ui.overlay = null;
+  $('#todo').replaceChildren(board);
 }
 
 function renderNode(n) {
+  if (n.cat === ADD) return addTile();
   if (n.cat) return tile(state.todo.cats.find((c) => c.id === n.cat));
   const el = h('div', { class: `split ${n.dir}` });
   n.kids.forEach((k, i) => {
@@ -342,10 +377,10 @@ function divider(node, i) {
   return d;
 }
 
-function dropZone(e, el) {
+function dropZone(e, el, allowSwap = true) {
   const r = el.getBoundingClientRect();
   const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
-  if (x > 0.3 && x < 0.7 && y > 0.3 && y < 0.7) return 'swap';
+  if (allowSwap && x > 0.3 && x < 0.7 && y > 0.3 && y < 0.7) return 'swap';
   const d = { left: x, right: 1 - x, top: y, bottom: 1 - y };
   return Object.keys(d).reduce((m, k) => (d[k] < d[m] ? k : m));
 }
@@ -361,6 +396,35 @@ function showOverlay(el, zone) {
   Object.assign(ui.overlay.style, { left: `${box.l}px`, top: `${box.t}px`, width: `${box.w}px`, height: `${box.h}px` });
 }
 function hideOverlay() { ui.overlay?.remove(); ui.overlay = null; }
+
+function dropTarget(el, targetId, allowSwap) {
+  el.addEventListener('dragover', (e) => {
+    if (!ui.drag || ui.drag === targetId) return;
+    e.preventDefault();
+    showOverlay(el, dropZone(e, el, allowSwap));
+  });
+  el.addEventListener('drop', (e) => {
+    if (!ui.drag || ui.drag === targetId) return;
+    e.preventDefault();
+    const zone = dropZone(e, el, allowSwap), id = ui.drag;
+    ui.drag = null; hideOverlay();
+    if (zone === 'swap') swapLeaves(state.todo.layout, id, targetId);
+    else {
+      state.todo.layout = removeLeaf(state.todo.layout, id);
+      state.todo.layout = insertAt(state.todo.layout, targetId, id, zone);
+    }
+    state.todo.layout = tidy(state.todo.layout);
+    save(); render();
+  });
+}
+
+// The "new category" button lives in the layout as an immovable tile.
+function addTile() {
+  const el = h('section', { class: 'add-tile' },
+    h('button', { class: 'sq', title: 'New category', 'aria-label': 'New category', html: ICON.plus, onclick: () => catModal() }));
+  dropTarget(el, ADD, false);
+  return el;
+}
 
 function tile(cat) {
   const el = h('section', { class: 'cat', vars: { '--c': cat.color, '--on': textOn(cat.color) } });
@@ -385,23 +449,7 @@ function tile(cat) {
     save(); render();
   }));
 
-  el.addEventListener('dragover', (e) => {
-    if (!ui.drag || ui.drag === cat.id) return;
-    e.preventDefault();
-    showOverlay(el, dropZone(e, el));
-  });
-  el.addEventListener('drop', (e) => {
-    if (!ui.drag || ui.drag === cat.id) return;
-    e.preventDefault();
-    const zone = dropZone(e, el), id = ui.drag;
-    ui.drag = null; hideOverlay();
-    if (zone === 'swap') swapLeaves(state.todo.layout, id, cat.id);
-    else {
-      state.todo.layout = removeLeaf(state.todo.layout, id);
-      state.todo.layout = insertAt(state.todo.layout, cat.id, id, zone);
-    }
-    save(); render();
-  });
+  dropTarget(el, cat.id, true);
 
   const ed = ui.editor;
   const adding = ed?.kind === 'todo' && ed.id === 'new' && ed.cat === cat.id;
@@ -483,7 +531,9 @@ function catModal(cat) {
     else {
       const c = { id: uid(), name, color, tasks: [] };
       state.todo.cats.push(c);
-      appendLeaf(state.todo, c.id);
+      state.todo.layout = insertAt(state.todo.layout, ADD, c.id, 'left');
+      const L = state.todo.layout; // rebalance the top-level columns; the add tile stays narrow
+      if (L.dir === 'row') L.ws = L.kids.map((k) => (k.cat === ADD ? 0.45 : 1));
     }
     save(); close(); render();
   };
@@ -506,33 +556,72 @@ function catModal(cat) {
 const SETTINGS = [
   { key: 'open', title: 'Open at', a: ['Daily', 'daily'], b: ['Todo', 'todo'] },
   { key: 'weekStart', title: 'Week starts on', a: ['Monday', 'mon'], b: ['Sunday', 'sun'] },
-  { key: 'disableWeekends', title: 'Disable tasks on weekends', a: ['Off', false], b: ['On', true] },
+  { key: 'allDays', title: 'Enable all days for new tasks', a: ['No', false], b: ['Yes', true] },
   { key: 'switcher', title: 'Window switcher', a: ['Tabs', 'tabs'], b: ['Arrows', 'arrows'] },
 ];
 function setSetting(key, value) {
   state.settings[key] = value;
   save(); applySettings(); render();
-  if (ui.popOpen) fillPop();
+  if (ui.popOpen) syncPop();
 }
-function fillPop() {
+function applyBackground() {
+  const bg = state.settings.bg, el = $('#bg');
+  el.style.backgroundImage = bg.type === 'default' ? 'url("assets/biodome.jpg")' : bg.type === 'file' ? `url("${bg.value}")` : 'none';
+  el.style.backgroundColor = bg.type === 'color' ? bg.value : 'transparent';
+}
+function setBackground(bg) {
+  state.settings.bg = bg;
+  save(); applyBackground(); syncPop();
+}
+// Update the existing controls in place so the switches animate.
+function syncPop() {
+  for (const s of SETTINGS) {
+    const isB = state.settings[s.key] === s.b[1];
+    const row = $(`#pop [data-key="${s.key}"]`);
+    row.querySelector('.track').classList.toggle('on', isB);
+    row.querySelector('.track').setAttribute('aria-checked', String(isB));
+    row.querySelectorAll('.opt')[0].classList.toggle('cur', !isB);
+    row.querySelectorAll('.opt')[1].classList.toggle('cur', isB);
+  }
+  const bg = state.settings.bg;
+  $('#pop .bgrow').replaceChildren(...[
+    ['Default', 'default', () => setBackground({ type: 'default' }), 'Biodome'],
+    ['Image', 'file', async () => {
+      const url = await window.api?.chooseBackground();
+      if (url) setBackground({ type: 'file', value: `${url}?t=${Date.now()}` });
+    }, 'Image…'],
+    ['Black', 'black', () => setBackground({ type: 'color', value: '#000000' })],
+    ['White', 'white', () => setBackground({ type: 'color', value: '#ffffff' })],
+    ['Color', 'pick', () => { ui.bgPicker = !ui.bgPicker; syncPop(); }, 'Color…'],
+  ].map(([title, kind, fn, text]) => {
+    const on = (kind === 'default' && bg.type === 'default') || (kind === 'file' && bg.type === 'file')
+      || (kind === 'black' && bg.value === '#000000') || (kind === 'white' && bg.value === '#ffffff')
+      || (kind === 'pick' && bg.type === 'color' && !['#000000', '#ffffff'].includes(bg.value));
+    return h('button', { class: `bgbtn ${kind} ${on ? 'sel' : ''}`, title, onclick: fn, vars: kind === 'pick' && on ? { '--c': bg.value } : {} }, text || '');
+  }));
+  $('#pop .bgcols').hidden = !ui.bgPicker;
+  $('#pop .bgcols').replaceChildren(...BG_COLORS.map((c) => h('button', {
+    class: `swatch ${bg.value === c ? 'sel' : ''}`, vars: { '--c': c }, title: c,
+    onclick: () => setBackground({ type: 'color', value: c }),
+  })));
+}
+function buildPop() {
   $('#pop').replaceChildren(
-    ...SETTINGS.map((s) => {
-      const isB = state.settings[s.key] === s.b[1];
-      const track = h('button', { class: `track ${isB ? 'on' : ''}`, role: 'switch', 'aria-checked': String(isB), 'aria-label': s.title, onclick: () => setSetting(s.key, isB ? s.a[1] : s.b[1]) });
-      return h('div', { class: 'srow' },
-        h('span', { class: 'sl' }, s.title),
-        h('div', { class: 'sw' },
-          h('span', { class: `opt ${isB ? '' : 'cur'}`, onclick: () => setSetting(s.key, s.a[1]) }, s.a[0]),
-          track,
-          h('span', { class: `opt ${isB ? 'cur' : ''}`, onclick: () => setSetting(s.key, s.b[1]) }, s.b[0])));
-    }),
+    ...SETTINGS.map((s) => h('div', { class: 'srow', 'data-key': s.key },
+      h('span', { class: 'sl' }, s.title),
+      h('div', { class: 'sw' },
+        h('span', { class: 'opt', onclick: () => setSetting(s.key, s.a[1]) }, s.a[0]),
+        h('button', { class: 'track', role: 'switch', 'aria-label': s.title, onclick: () => setSetting(s.key, state.settings[s.key] === s.b[1] ? s.a[1] : s.b[1]) }),
+        h('span', { class: 'opt', onclick: () => setSetting(s.key, s.b[1]) }, s.b[0])))),
+    h('div', { class: 'srow col' }, h('span', { class: 'sl' }, 'Background'), h('div', { class: 'bgrow' }), h('div', { class: 'bgcols', hidden: true })),
     h('div', { class: 'note' }, 'Task names support Markdown (**bold**, *italic*, `code`) and LaTeX ($x^2$).'));
+  syncPop();
 }
 function closePop() { ui.popOpen = false; $('#pop').hidden = true; }
 function togglePop() {
   ui.popOpen = !ui.popOpen;
   $('#pop').hidden = !ui.popOpen;
-  if (ui.popOpen) fillPop();
+  if (ui.popOpen) syncPop();
 }
 
 /* ================= shell ================= */
@@ -555,7 +644,7 @@ function syncShell() {
   r.replaceChildren(h('span', { html: ICON.right }), h('span', {}, LABEL[other]));
   l.onclick = r.onclick = () => switchView(other);
 }
-function applySettings() { syncShell(); }
+function applySettings() { syncShell(); applyBackground(); }
 
 function render() {
   renderDaily();
@@ -565,7 +654,9 @@ function render() {
   if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
 }
 
+buildPop();
 $('#gear').innerHTML = ICON.gear;
 $('#gear').addEventListener('click', togglePop);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui.popOpen) closePop(); });
+applyBackground();
 render();

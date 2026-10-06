@@ -2,13 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: file:; script-src 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Tasks</title>
   <link rel="stylesheet" href="node_modules/katex/dist/katex.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="bg"></div>
   <header id="top">
     <nav id="tabs" aria-label="Window"></nav>
     <h1 id="title"></h1>
