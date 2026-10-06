@@ -178,14 +178,15 @@ input.ed::placeholder { color: color-mix(in srgb, var(--on) 55%, transparent); }
 
 /* stats */
 #stats { display: flex; flex-direction: column; overflow: hidden; padding-top: 4px; }
-.stats-card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px; background: var(--surface); backdrop-filter: blur(8px); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.stats-card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 14px; background: color-mix(in srgb, var(--surface) 18%, transparent); backdrop-filter: blur(1.5px); border: 1px solid color-mix(in srgb, var(--line) 45%, transparent); }
 .sc-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.sc-head h2 { margin: 0; font-size: 17px; flex: 1; min-width: 160px; }
+.sc-head .sw { margin-left: auto; background: var(--surface); backdrop-filter: blur(8px); border-radius: 14px; padding: 3px 10px; }
+.sc-head .today-btn { border: 0; background: var(--surface); backdrop-filter: blur(8px); border-radius: 12px; padding: 2px 12px; height: 24px; font-size: 12px; color: var(--text); }
 .sc-chart { flex: 1; min-height: 0; display: flex; align-items: stretch; gap: 6px; }
 .sc-chart .ib { align-self: center; color: var(--text); } .sc-chart .ib:disabled { opacity: .25; cursor: default; pointer-events: none; }
 .chart { flex: 1; min-width: 0; position: relative; color: var(--text); }
 .chart svg { position: absolute; inset: 0; }
-.axis text { fill: currentColor; font-size: 11px; opacity: .75; }
+.axis text { fill: currentColor; font-size: 11px; opacity: .85; paint-order: stroke; stroke: color-mix(in srgb, var(--bg) 75%, transparent); stroke-width: 3px; stroke-linejoin: round; }
 .axis .cap { font-size: 10px; opacity: .5; letter-spacing: .08em; text-transform: uppercase; }
 .grid { stroke: currentColor; stroke-opacity: .16; stroke-width: 1; }
 .ln { transition: opacity .15s; } .ln path { transition: stroke-width .15s; }
@@ -207,3 +208,10 @@ input.ed::placeholder { color: color-mix(in srgb, var(--on) 55%, transparent); }
 .tstats { flex: none; display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; justify-content: center; }
 .tchip { --c: transparent; display: flex; align-items: center; gap: 8px; padding: 3px 10px; font-size: 12px; border-radius: 8px; white-space: nowrap; background: color-mix(in srgb, var(--c) 45%, var(--surface)); backdrop-filter: blur(8px); box-shadow: var(--shadow); }
 .tchip b { font-variant-numeric: tabular-nums; }
+
+.bgbtn.rainbow { color: #fff; filter: none; } .bgbtn.rainbow svg { width: 14px; height: 14px; filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
+.drow.task.dragging { opacity: .4; }
+.drow.task .dname[draggable="true"] { cursor: grab; }
+.drow.drop-above { box-shadow: 0 -3px 0 0 var(--accent); } .drow.drop-below { box-shadow: 0 3px 0 0 var(--accent); }
+.plus.drop-above { border-color: var(--accent); opacity: .9; }
+.tstats .tlabel { align-self: center; font-size: 11px; color: var(--text); background: var(--surface); backdrop-filter: blur(8px); border-radius: 8px; padding: 3px 10px; white-space: nowrap; }

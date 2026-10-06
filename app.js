@@ -16,6 +16,8 @@ const ICON = {
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
   brush: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4L12 12"/><path d="M10.5 10.5l3 3"/><path d="M13.5 13.5c0 3.2-2.2 6-7 6 1.3-1.1 1.7-2.1 1.7-3.3 0-1.6 1.4-2.7 2.9-2.7z"/></svg>',
   left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
@@ -23,7 +25,7 @@ const ICON = {
 
 /* ================= state ================= */
 const DEFAULTS = () => ({
-  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', statsMode: 'pct', statsRange: 12, bg: { type: 'default' } },
+  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
   daily: { tasks: [], checks: {} },
   todo: { cats: [], layout: null },
 });
@@ -143,11 +145,12 @@ const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 /* ================= shared editor machinery ================= */
 // One inline editor at a time. Enter / click-away commits (empty name discards), Esc cancels.
 function openEditor(ed) { ui.editor = ed; render(); }
-function commitEditor() {
+function commitEditor(viaEnter = false) {
   const ed = ui.editor;
   if (!ed) return;
   ui.editor = null;
-  const name = ed.draft.name.trim();
+  // Enter on a new, nameless task creates "Task #n"; clicking away discards it.
+  const name = ed.draft.name.trim() || (viaEnter && ed.id === 'new' ? ed.fallback() : '');
   if (name) { ed.apply(name); save(); }
   render();
 }
@@ -157,7 +160,7 @@ function editorInput(draft) {
   const i = h('input', { class: 'ed', type: 'text', value: draft.name, placeholder: 'Task name', spellcheck: 'false', maxlength: '200' });
   i.addEventListener('input', () => { draft.name = i.value; });
   i.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); commitEditor(); }
+    if (e.key === 'Enter') { e.preventDefault(); commitEditor(true); }
     else if (e.key === 'Escape') { e.preventDefault(); cancelEditor(); }
   });
   return i;
@@ -203,9 +206,9 @@ function renderDaily() {
     state.daily.tasks.map((t) => (ui.editor?.kind === 'daily' && ui.editor.id === t.id ? dailyEditorRow(cols) : dailyRow(t, cols))),
     ui.editor?.kind === 'daily' && ui.editor.id === 'new'
       ? dailyEditorRow(cols)
-      : plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', draft: { name: '', days: Array(7).fill(state.settings.allDays), color: pickTaskColor(state.daily.tasks, state.daily.tasks.length) }, apply(name) {
+      : endDrop(plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', fallback: () => `Task #${state.daily.tasks.length + 1}`, draft: { name: '', days: Array(7).fill(state.settings.allDays), color: pickTaskColor(state.daily.tasks, state.daily.tasks.length) }, apply(name) {
         state.daily.tasks.push({ id: uid(), name, days: this.draft.days.slice(), color: this.draft.color, created: isoDate(new Date()) });
-      } })));
+      } }))));
 
   root.replaceChildren(
     h('div', { class: 'wk' },
@@ -215,6 +218,13 @@ function renderDaily() {
         h('button', { class: 'ib big', title: 'Next week', html: ICON.right, onclick: () => { ui.weekOffset++; render(); } })),
       h('button', { class: 'today-btn', style: { visibility: ui.weekOffset ? 'visible' : 'hidden' }, onclick: () => { ui.weekOffset = 0; render(); } }, 'This week')),
     grid);
+}
+
+function endDrop(btn) {
+  btn.addEventListener('dragover', (e) => { if (ui.dragTask) { e.preventDefault(); clearDropMarks(); btn.classList.add('drop-above'); } });
+  btn.addEventListener('dragleave', () => btn.classList.remove('drop-above'));
+  btn.addEventListener('drop', (e) => { if (ui.dragTask) { e.preventDefault(); moveTask(ui.dragTask, null, true); } });
+  return btn;
 }
 
 function dailyRow(t, cols) {
@@ -238,7 +248,7 @@ function dailyRow(t, cols) {
     delete state.daily.checks[t.id];
     save(); render();
   }));
-  return h('div', { class: 'drow task', vars: { '--c': t.color, '--on': textOn(t.color) } }, name, cols.map((c) => {
+  const row = h('div', { class: 'drow task', vars: { '--c': t.color, '--on': textOn(t.color) } }, name, cols.map((c) => {
     if (!t.days[c.dow]) return h('div', { class: 'dcell' });
     const box = checkbox(!!checks[c.iso], () => {
       const m = (state.daily.checks[t.id] ||= {});
@@ -249,6 +259,38 @@ function dailyRow(t, cols) {
     });
     return h('div', { class: 'dcell' }, box);
   }));
+  name.draggable = true;
+  name.addEventListener('dragstart', (e) => {
+    ui.dragTask = t.id;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', t.id);
+    e.dataTransfer.setDragImage(row, 20, 20);
+    setTimeout(() => row.classList.add('dragging'), 0);
+  });
+  name.addEventListener('dragend', () => { ui.dragTask = null; row.classList.remove('dragging'); clearDropMarks(); });
+  row.addEventListener('dragover', (e) => {
+    if (!ui.dragTask || ui.dragTask === t.id) return;
+    e.preventDefault();
+    const r = row.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+    clearDropMarks();
+    row.classList.add(after ? 'drop-below' : 'drop-above');
+  });
+  row.addEventListener('drop', (e) => {
+    if (!ui.dragTask) return;
+    e.preventDefault();
+    moveTask(ui.dragTask, t.id, row.classList.contains('drop-below'));
+  });
+  return row;
+}
+function clearDropMarks() { document.querySelectorAll('.drop-above,.drop-below').forEach((el) => el.classList.remove('drop-above', 'drop-below')); }
+function moveTask(id, targetId, after) {
+  const arr = state.daily.tasks;
+  const [t] = arr.splice(arr.findIndex((x) => x.id === id), 1);
+  let to = targetId ? arr.findIndex((x) => x.id === targetId) : arr.length;
+  if (targetId && after) to++;
+  arr.splice(to, 0, t);
+  ui.dragTask = null;
+  save(); render();
 }
 
 function dailyEditorRow(cols) {
@@ -348,15 +390,7 @@ function renderTodo() {
   board.addEventListener('dragleave', (e) => { if (!board.contains(e.relatedTarget)) hideOverlay(); });
   ui.board = board;
   ui.overlay = null;
-  const avg = (tasks) => {
-    const ds = tasks.filter((t) => t.completed).map((t) => (new Date(t.completed) - new Date(t.created)) / 864e5);
-    return ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : null;
-  };
-  const fmt = (v) => (v == null ? '–' : `${Math.round(v * 10) / 10}d`);
-  const chip = (label, v, color) => h('div', { class: 'tchip', title: `Average days to complete: ${label}`, vars: color ? { '--c': color } : {} }, h('span', {}, label), h('b', {}, fmt(v)));
-  $('#todo').replaceChildren(board, h('div', { class: 'tstats' },
-    chip('All', avg(state.todo.cats.flatMap((c) => c.tasks))),
-    state.todo.cats.map((c) => chip(c.name, avg(c.tasks), c.color))));
+  $('#todo').replaceChildren(board);
 }
 
 function renderNode(n) {
@@ -471,7 +505,7 @@ function tile(cat) {
   el.append(head, h('div', { class: 'cat-list' },
     cat.tasks.map((t) => (ed?.kind === 'todo' && ed.id === t.id ? todoEditor(ed) : todoTask(cat, t))),
     adding ? todoEditor(ed)
-      : plusButton('small', 'Add task', () => openEditor({ kind: 'todo', id: 'new', cat: cat.id, draft: { name: '', done: false }, apply(name) {
+      : plusButton('small', 'Add task', () => openEditor({ kind: 'todo', id: 'new', cat: cat.id, fallback: () => `Task #${cat.tasks.length + 1}`, draft: { name: '', done: false }, apply(name) {
         cat.tasks.push(makeTask(name, this.draft.done));
       } }))));
   return el;
@@ -571,7 +605,7 @@ function catModal(cat) {
 const SETTINGS = [
   { key: 'open', title: 'Open at', opts: [['Daily', 'daily'], ['Todo', 'todo'], ['Stats', 'stats']] },
   { key: 'weekStart', title: 'Week starts on', opts: [['Monday', 'mon'], ['Sunday', 'sun']] },
-  { key: 'allDays', title: 'Enable all days for new tasks', opts: [['No', false], ['Yes', true]] },
+  { key: 'allDays', title: 'New tasks are daily', opts: [['No', false], ['Yes', true]] },
   { key: 'switcher', title: 'Window switcher', opts: [['Tabs', 'tabs'], ['Arrows', 'arrows']] },
   { key: 'interp', title: 'Graph interpolation', circles: true, opts: [['x<sup>1</sup>', 'linear'], ['x<sup>2</sup>', 'quadratic'], ['x<sup>3</sup>', 'cubic']] },
 ];
@@ -607,8 +641,8 @@ function syncPop() {
   $('#pop .bgrow').replaceChildren(
     h('button', { class: `bgbtn white ${isColor('#ffffff') ? 'sel' : ''}`, title: 'White', onclick: () => setBackground({ type: 'color', value: '#ffffff' }) }),
     h('button', { class: `bgbtn black ${isColor('#000000') ? 'sel' : ''}`, title: 'Black', onclick: () => setBackground({ type: 'color', value: '#000000' }) }),
-    h('button', { class: `bgbtn rainbow ${bg.type === 'color' && !['#ffffff', '#000000'].includes(bg.value) ? 'sel' : ''}`, title: 'Pick a color', onclick: () => { ui.bgPicker = !ui.bgPicker; syncPop(); } }),
-    h('button', { class: `bgbtn ${bg.type === 'file' ? 'sel' : ''}`, title: 'Choose an image', html: ICON.brush, onclick: async () => {
+    h('button', { class: `bgbtn rainbow ${bg.type === 'color' && !['#ffffff', '#000000'].includes(bg.value) ? 'sel' : ''}`, title: 'Pick a color', html: ICON.chev, onclick: () => { ui.bgPicker = !ui.bgPicker; syncPop(); } }),
+    h('button', { class: `bgbtn ${bg.type === 'file' ? 'sel' : ''}`, title: 'Choose an image', html: ICON.file, onclick: async () => {
       const url = await window.api?.chooseBackground();
       if (url) setBackground({ type: 'file', value: `${url}?t=${Date.now()}` });
     } }));
@@ -643,7 +677,6 @@ function togglePop() {
 
 /* ================= STATS ================= */
 const LINE_STOPS = ['#e07b78', '#e0b84a', '#6fb87a', '#4fb3b0', '#5f93d6', '#9a78c4'];
-const RANGES = [4, 12, 26, 52];
 const SVGNS = 'http://www.w3.org/2000/svg';
 function svg(tag, attrs, ...kids) {
   const el = document.createElementNS(SVGNS, tag);
@@ -661,34 +694,60 @@ function weekStartOf(date) {
   d.setDate(d.getDate() - ((d.getDay() - startDow + 7) % 7));
   return d;
 }
-// Per week: completed checks vs. days the task(s) were enabled (from creation up to today).
+const GRANS = [['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['year', 'Year']];
+const RANGE_OPTS = { day: [7, 14, 30, 90], week: [4, 12, 26, 52], month: [6, 12, 24, 36], year: [3, 5, 10, 20] };
+const CAPTION = { day: 'Day', week: 'Week of', month: 'Month', year: 'Year' };
+function bucketStart(date, g) {
+  const d = new Date(date); d.setHours(0, 0, 0, 0);
+  if (g === 'week') return weekStartOf(d);
+  if (g === 'month') return new Date(d.getFullYear(), d.getMonth(), 1);
+  if (g === 'year') return new Date(d.getFullYear(), 0, 1);
+  return d;
+}
+function shiftBucket(d, g, k) {
+  if (g === 'day') return new Date(d.getFullYear(), d.getMonth(), d.getDate() + k);
+  if (g === 'week') return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7 * k);
+  if (g === 'month') return new Date(d.getFullYear(), d.getMonth() + k, 1);
+  return new Date(d.getFullYear() + k, 0, 1);
+}
+function bucketLabel(d, g) {
+  if (g === 'year') return String(d.getFullYear());
+  if (g === 'month') return `${MONTHS[d.getMonth()]} ’${String(d.getFullYear()).slice(2)}`;
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+// One point per period: checks done vs. days a task was enabled. A task counts from its creation
+// date, or from its earliest check if that is older, so retroactively entered data always shows.
 function statsData() {
-  const N = state.settings.statsRange;
+  const g = state.settings.statsGran, N = RANGE_OPTS[g][state.settings.statsRange];
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const todayIso = isoDate(today);
-  const last = weekStartOf(today); last.setDate(last.getDate() - ui.statsOffset * N * 7);
-  const weeks = Array.from({ length: N }, (_, i) => { const d = new Date(last); d.setDate(last.getDate() - (N - 1 - i) * 7); return d; });
+  const last = shiftBucket(bucketStart(today, g), g, -ui.statsOffset * N);
+  const starts = Array.from({ length: N }, (_, i) => shiftBucket(last, g, i - (N - 1)));
   const pct = state.settings.statsMode === 'pct';
-  const calc = (tasks, w) => {
+  const from = new Map(state.daily.tasks.map((t) => {
+    const first = Object.keys(state.daily.checks[t.id] || {}).sort()[0];
+    return [t.id, first && first < (t.created || '9') ? first : t.created || todayIso];
+  }));
+  const calc = (tasks, a, b) => {
     let c = 0, p = 0;
     for (const t of tasks) {
-      const checks = state.daily.checks[t.id] || {};
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(w); d.setDate(w.getDate() + i);
+      const checks = state.daily.checks[t.id] || {}, start = from.get(t.id);
+      for (const d = new Date(a); d < b; d.setDate(d.getDate() + 1)) {
         const iso = isoDate(d);
-        if (iso > todayIso || iso < (t.created || '') || !t.days[d.getDay()]) continue;
-        p++; if (checks[iso]) c++;
+        if (iso < start || !t.days[d.getDay()]) continue;
+        const on = !!checks[iso];
+        if (iso > todayIso && !on) continue;
+        p++; if (on) c++;
       }
     }
     return p ? { c, p, v: pct ? (c / p) * 100 : c } : null;
   };
   const tasks = state.daily.tasks;
-  const created = tasks.map((t) => t.created).filter(Boolean).sort()[0];
+  const span = (i) => [starts[i], shiftBucket(starts[i], g, 1)];
   return {
-    weeks, pct,
-    series: tasks.map((t) => ({ task: t, pts: weeks.map((w) => calc([t], w)) })),
-    all: weeks.map((w) => calc(tasks, w)),
-    atStart: !created || isoDate(weeks[0]) <= isoDate(weekStartOf(new Date(`${created}T00:00:00`))),
+    g, weeks: starts, labels: starts.map((d) => bucketLabel(d, g)), pct,
+    series: tasks.map((t) => ({ task: t, pts: starts.map((_, i) => calc([t], ...span(i))) })),
+    all: starts.map((_, i) => calc(tasks, ...span(i))),
   };
 }
 
@@ -711,6 +770,19 @@ function linePath(pts, mode) {
   return d;
 }
 
+function todoAvgStrip() {
+  const avg = (tasks) => {
+    const ds = tasks.filter((t) => t.completed).map((t) => (new Date(t.completed) - new Date(t.created)) / 864e5);
+    return ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : null;
+  };
+  const fmt = (v) => (v == null ? '–' : `${Math.round(v * 10) / 10}d`);
+  const chip = (label, v, color) => h('div', { class: 'tchip', title: `Average days to complete: ${label}`, vars: color ? { '--c': color } : {} }, h('span', {}, label), h('b', {}, fmt(v)));
+  return h('div', { class: 'tstats' },
+    h('span', { class: 'tlabel' }, 'Todo · avg days to finish'),
+    chip('All', avg(state.todo.cats.flatMap((c) => c.tasks))),
+    state.todo.cats.map((c) => chip(c.name, avg(c.tasks), c.color)));
+}
+
 function renderStats() {
   const root = $('#stats');
   const st = state.settings;
@@ -730,19 +802,20 @@ function renderStats() {
   }, t.name)));
   const arrow = (dir) => h('button', {
     class: 'ib big', title: dir < 0 ? 'Earlier' : 'Later', html: dir < 0 ? ICON.left : ICON.right,
-    onclick: () => { ui.statsOffset = Math.max(0, ui.statsOffset - dir); renderStats(); },
+    onclick: () => { ui.statsOffset -= dir; renderStats(); },
   });
-  const left = arrow(-1), right = arrow(1);
-  const d0 = statsData();
-  left.disabled = d0.atStart; right.disabled = ui.statsOffset === 0;
   const track = h('button', { class: `track ${mode ? '' : 'on'}`, role: 'switch', 'aria-label': 'Percentage or raw count', onclick: () => setSetting('statsMode', mode ? 'raw' : 'pct') });
-  root.replaceChildren(h('div', { class: 'stats-card' },
-    h('div', { class: 'sc-head' },
-      h('h2', {}, 'Average completion'),
-      h('div', { class: 'seg' }, RANGES.map((n) => h('button', { class: n === st.statsRange ? 'sel' : '', title: `${n} weeks`, onclick: () => { st.statsRange = n; ui.statsOffset = 0; save(); renderStats(); } }, `${n}w`))),
-      h('div', { class: 'sw' }, h('span', { class: `opt ${mode ? 'cur' : ''}` }, 'Percent'), track, h('span', { class: `opt ${mode ? '' : 'cur'}` }, 'Count'))),
-    h('div', { class: 'sc-chart' }, left, chart, right),
-    legend));
+  const unit = st.statsGran[0];
+  root.replaceChildren(
+    h('div', { class: 'stats-card' },
+      h('div', { class: 'sc-head' },
+        h('div', { class: 'seg' }, GRANS.map(([g, l]) => h('button', { class: g === st.statsGran ? 'sel' : '', onclick: () => { st.statsGran = g; ui.statsOffset = 0; save(); renderStats(); } }, l))),
+        h('div', { class: 'seg' }, RANGE_OPTS[st.statsGran].map((n, i) => h('button', { class: i === st.statsRange ? 'sel' : '', title: `Show ${n} points`, onclick: () => { st.statsRange = i; ui.statsOffset = 0; save(); renderStats(); } }, `${n}${unit}`))),
+        h('button', { class: 'today-btn', style: { visibility: ui.statsOffset ? 'visible' : 'hidden' }, onclick: () => { ui.statsOffset = 0; renderStats(); } }, 'Today'),
+        h('div', { class: 'sw' }, h('span', { class: `opt ${mode ? 'cur' : ''}` }, 'Percent'), track, h('span', { class: `opt ${mode ? '' : 'cur'}` }, 'Count'))),
+      h('div', { class: 'sc-chart' }, arrow(-1), chart, arrow(1)),
+      legend),
+    todoAvgStrip());
   ui.statsRO?.disconnect();
   ui.statsRO = new ResizeObserver(() => drawChart(chart));
   ui.statsRO.observe(chart);
@@ -754,7 +827,7 @@ function styleLines() {
   let top = null;
   root.querySelectorAll('.ln').forEach((p) => {
     const hot = focus ? p.dataset.id === focus : p.dataset.id === 'all';
-    p.style.opacity = hot ? 1 : focus ? 0.1 : 0.26;
+    p.style.opacity = hot ? 1 : focus ? 0.1 : 0.34;
     p.style.strokeWidth = hot ? 3.5 : 2;
     if (hot && focus) top = p;
   });
@@ -787,9 +860,9 @@ function drawChart(el) {
   }
   d.weeks.forEach((w, i) => {
     if ((N - 1 - i) % every) return;
-    axis.append(Object.assign(svg('text', { x: X(i), y: H - M.b + 18, 'text-anchor': 'middle' }), { textContent: `${MONTHS[w.getMonth()]} ${w.getDate()}` }));
+    axis.append(Object.assign(svg('text', { x: X(i), y: H - M.b + 18, 'text-anchor': 'middle' }), { textContent: d.labels[i] }));
   });
-  axis.append(Object.assign(svg('text', { x: M.l + pw / 2, y: H - 6, 'text-anchor': 'middle', class: 'cap' }), { textContent: 'Week of' }));
+  axis.append(Object.assign(svg('text', { x: M.l + pw / 2, y: H - 6, 'text-anchor': 'middle', class: 'cap' }), { textContent: CAPTION[d.g] }));
 
   const gid = 'g' + uid();
   const grad = svg('linearGradient', { id: gid, gradientUnits: 'userSpaceOnUse', x1: M.l, x2: W - M.r, y1: 0, y2: 0 },
@@ -818,8 +891,7 @@ function drawChart(el) {
       const dot = svg('circle', { cx: X(i), cy: Y(p.v), r: 4.5, fill: color, stroke: '#fff', 'stroke-width': 1.5, class: 'pt' });
       const hit = svg('circle', { cx: X(i), cy: Y(p.v), r: 11, fill: 'transparent' });
       hit.addEventListener('mouseenter', () => {
-        const w = d.weeks[i];
-        tip.textContent = `${MONTHS[w.getMonth()]} ${w.getDate()}: ${d.pct ? `${Math.round(p.v)}% (${p.c}/${p.p})` : `${p.c} of ${p.p}`}`;
+        tip.textContent = `${d.labels[i]}: ${d.pct ? `${Math.round(p.v)}%` : `${p.c} of ${p.p}`}`;
         tip.hidden = false;
         tip.style.left = `${Math.min(Math.max(X(i), 70), W - 70)}px`; tip.style.top = `${Y(p.v) - 12}px`;
         dot.setAttribute('r', 6.5);
