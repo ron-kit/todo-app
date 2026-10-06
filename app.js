@@ -4,11 +4,25 @@
 const STORE_KEY = 'tasks-app-v1';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-// Muted take on the 16 HTML colors (black/gray/silver/white become slate tones).
-const COLORS = [
-  '#d49aa2', '#e6a3a0', '#b9a0cc', '#d8a6cb', '#9fcba6', '#c3dc9f', '#c9c28c', '#ecdc9c',
-  '#94a5d1', '#9fc0e8', '#8fcbc8', '#a9dce0', '#8a909b', '#a2a8b1', '#c8ccd2', '#e8e6e1',
-];
+// 10 distinct hues, 3 brightness levels: dim (backgrounds, "off" graph lines),
+// mid (tasks and categories), bright (selected graph lines).
+const HUES = [4, 28, 48, 85, 140, 175, 200, 225, 275, 325];
+function hsl(h, sat, lig) {
+  sat /= 100; lig /= 100;
+  const a = sat * Math.min(lig, 1 - lig), f = (n) => { const k = (n + h / 30) % 12; return lig - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+  return `#${[f(0), f(8), f(4)].map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+const PALETTE = HUES.map((h) => ({ hue: h, dim: hsl(h, 45, 72), mid: hsl(h, 72, 72), bright: hsl(h, 92, 50) }));
+const COLORS = PALETTE.map((p) => p.mid);
+const shadeOf = (mid, level) => (PALETTE.find((p) => p.mid === mid) || PALETTE[0])[level];
+function migrateColor(hex) { // map colors from older versions onto the nearest palette hue
+  if (COLORS.includes(hex)) return hex;
+  const n = parseInt((hex || '#888888').slice(1), 16), [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  const hue = d ? 60 * (mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) : 200;
+  const dist = (p) => Math.min(Math.abs(p.hue - hue), 360 - Math.abs(p.hue - hue));
+  return PALETTE.reduce((a, p) => (dist(p) < dist(a) ? p : a)).mid;
+}
 const ADD = '__add'; // the "new category" pseudo-tile in the layout
 const ICON = {
   x: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
@@ -25,7 +39,7 @@ const ICON = {
 
 /* ================= state ================= */
 const DEFAULTS = () => ({
-  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
+  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', opacity: { daily: 55, todo: 55, stats: 55 }, statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
   daily: { tasks: [], checks: {} },
   todo: { cats: [], layout: null },
 });
@@ -53,9 +67,12 @@ function load() {
       Object.assign(d.todo, s.todo);
     }
   } catch { /* fresh state */ }
+  if (typeof d.settings.opacity === 'number') d.settings.opacity = { daily: d.settings.opacity, todo: d.settings.opacity, stats: d.settings.opacity };
+  d.settings.opacity = { daily: 55, todo: 55, stats: 55, ...d.settings.opacity };
   normalizeLayout(d.todo);
+  d.todo.cats.forEach((c) => { c.color = migrateColor(c.color); });
   d.daily.tasks.forEach((t, i) => {
-    if (!t.color) t.color = pickTaskColor(d.daily.tasks, i);
+    t.color = t.color ? migrateColor(t.color) : pickTaskColor(d.daily.tasks, i);
     if (!t.created) t.created = Object.keys(d.daily.checks[t.id] || {}).sort()[0] || isoDate(new Date());
   });
   return d;
@@ -135,6 +152,7 @@ function renderText(src) {
     catch { return keep(esc(m)); }
   });
   s = esc(s)
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>')
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>')
     .replace(/~~(.+?)~~/g, '<s>$1</s>');
@@ -206,9 +224,9 @@ function renderDaily() {
     state.daily.tasks.map((t) => (ui.editor?.kind === 'daily' && ui.editor.id === t.id ? dailyEditorRow(cols) : dailyRow(t, cols))),
     ui.editor?.kind === 'daily' && ui.editor.id === 'new'
       ? dailyEditorRow(cols)
-      : endDrop(plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', fallback: () => `Task #${state.daily.tasks.length + 1}`, draft: { name: '', days: Array(7).fill(state.settings.allDays), color: pickTaskColor(state.daily.tasks, state.daily.tasks.length) }, apply(name) {
+      : plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', fallback: () => `Task #${state.daily.tasks.length + 1}`, draft: { name: '', days: Array(7).fill(state.settings.allDays), color: pickTaskColor(state.daily.tasks, state.daily.tasks.length) }, apply(name) {
         state.daily.tasks.push({ id: uid(), name, days: this.draft.days.slice(), color: this.draft.color, created: isoDate(new Date()) });
-      } }))));
+      } })));
 
   root.replaceChildren(
     h('div', { class: 'wk' },
@@ -218,13 +236,6 @@ function renderDaily() {
         h('button', { class: 'ib big', title: 'Next week', html: ICON.right, onclick: () => { ui.weekOffset++; render(); } })),
       h('button', { class: 'today-btn', style: { visibility: ui.weekOffset ? 'visible' : 'hidden' }, onclick: () => { ui.weekOffset = 0; render(); } }, 'This week')),
     grid);
-}
-
-function endDrop(btn) {
-  btn.addEventListener('dragover', (e) => { if (ui.dragTask) { e.preventDefault(); clearDropMarks(); btn.classList.add('drop-above'); } });
-  btn.addEventListener('dragleave', () => btn.classList.remove('drop-above'));
-  btn.addEventListener('drop', (e) => { if (ui.dragTask) { e.preventDefault(); moveTask(ui.dragTask, null, true); } });
-  return btn;
 }
 
 function dailyRow(t, cols) {
@@ -259,6 +270,7 @@ function dailyRow(t, cols) {
     });
     return h('div', { class: 'dcell' }, box);
   }));
+  row.dataset.id = t.id;
   name.draggable = true;
   name.addEventListener('dragstart', (e) => {
     ui.dragTask = t.id;
@@ -267,20 +279,18 @@ function dailyRow(t, cols) {
     e.dataTransfer.setDragImage(row, 20, 20);
     setTimeout(() => row.classList.add('dragging'), 0);
   });
-  name.addEventListener('dragend', () => { ui.dragTask = null; row.classList.remove('dragging'); clearDropMarks(); });
-  row.addEventListener('dragover', (e) => {
-    if (!ui.dragTask || ui.dragTask === t.id) return;
-    e.preventDefault();
-    const r = row.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
-    clearDropMarks();
-    row.classList.add(after ? 'drop-below' : 'drop-above');
-  });
-  row.addEventListener('drop', (e) => {
-    if (!ui.dragTask) return;
-    e.preventDefault();
-    moveTask(ui.dragTask, t.id, row.classList.contains('drop-below'));
-  });
+  name.addEventListener('dragend', () => { ui.dragTask = null; ui.dropAt = null; row.classList.remove('dragging'); clearDropMarks(); });
   return row;
+}
+// Row whose box is closest to y (inside counts as distance 0), and whether y is past its middle.
+function nearestRow(rows, y) {
+  let best = null, score = Infinity;
+  for (const r of rows) {
+    const b = r.getBoundingClientRect(), mid = (b.top + b.bottom) / 2;
+    const sc = (y < b.top ? b.top - y : y > b.bottom ? y - b.bottom : 0) * 1000 + Math.abs(y - mid);
+    if (sc < score) { score = sc; best = { row: r, after: y > mid }; }
+  }
+  return best;
 }
 function clearDropMarks() { document.querySelectorAll('.drop-above,.drop-below').forEach((el) => el.classList.remove('drop-above', 'drop-below')); }
 function moveTask(id, targetId, after) {
@@ -296,19 +306,20 @@ function moveTask(id, targetId, after) {
 function dailyEditorRow(cols) {
   const ed = ui.editor;
   const input = editorInput(ed.draft);
-  const dot = h('button', { class: 'dot', title: 'Highlight color', onclick: () => {
-    const open = row.querySelector('.palette');
-    if (open) { open.remove(); return; }
-    const pal = h('div', { class: 'palette' }, COLORS.map((c) => h('button', {
-      class: `swatch ${c === ed.draft.color ? 'sel' : ''}`, vars: { '--c': c },
-      onclick: () => { ed.draft.color = c; row.style.setProperty('--c', c); row.style.setProperty('--on', textOn(c)); pal.remove(); input.focus(); },
-    })));
-    nameCell.append(pal);
-  } });
-  dot.addEventListener('mousedown', keepFocus);
-  const nameCell = h('div', { class: 'dname' }, dot, input);
+  const pal = h('div', { class: 'palette' }, COLORS.map((c) => {
+    const sw = h('button', {
+      class: `swatch ${c === ed.draft.color ? 'sel' : ''}`, vars: { '--c': c }, tabindex: '-1', title: 'Highlight color',
+      onclick: () => {
+        ed.draft.color = c;
+        row.style.setProperty('--c', c); row.style.setProperty('--on', textOn(c));
+        pal.querySelectorAll('.swatch').forEach((x) => x.classList.toggle('sel', x === sw));
+      },
+    });
+    sw.addEventListener('mousedown', keepFocus);
+    return sw;
+  }));
   const row = h('div', { class: 'drow task editor', vars: { '--c': ed.draft.color, '--on': textOn(ed.draft.color) } },
-    nameCell,
+    h('div', { class: 'dname' }, input),
     cols.map((c) => {
       const b = checkbox(ed.draft.days[c.dow], () => {
         ed.draft.days[c.dow] = !ed.draft.days[c.dow];
@@ -317,7 +328,8 @@ function dailyEditorRow(cols) {
       b.tabIndex = -1;
       b.addEventListener('mousedown', keepFocus);
       return h('div', { class: 'dcell' }, b);
-    }));
+    }),
+    pal);
   ed.el = row;
   return row;
 }
@@ -476,7 +488,7 @@ function addTile() {
 }
 
 function tile(cat) {
-  const el = h('section', { class: 'cat', vars: { '--c': cat.color, '--on': textOn(cat.color) } });
+  const el = h('section', { class: 'cat', vars: { '--c': cat.color, '--cd': shadeOf(cat.color, 'dim'), '--on': textOn(cat.color) } });
   const head = h('header', {
     class: 'cat-h', draggable: 'true', title: 'Drag to rearrange · click to edit',
     ondragstart: (e) => {
@@ -499,6 +511,21 @@ function tile(cat) {
   }));
 
   dropTarget(el, cat.id, true);
+  // Task drags: the whole tile is a drop zone, so dropping above/below everything lands first/last.
+  el.addEventListener('dragover', (e) => {
+    if (!ui.dragTodo) return;
+    e.preventDefault();
+    const rows = [...el.querySelectorAll('.ttask:not(.editor)')].filter((r) => r.dataset.id !== ui.dragTodo.id);
+    const hit = nearestRow(rows, e.clientY);
+    clearDropMarks();
+    ui.dropAt = { cat: cat.id, id: hit?.row.dataset.id, after: !!hit?.after };
+    if (hit) hit.row.classList.add(hit.after ? 'drop-below' : 'drop-above');
+  });
+  el.addEventListener('drop', (e) => {
+    if (!ui.dragTodo || ui.dropAt?.cat !== cat.id) return;
+    e.preventDefault();
+    moveTodoTask(ui.dragTodo, cat.id, ui.dragTodo.id, ui.dropAt.id, ui.dropAt.after);
+  });
 
   const ed = ui.editor;
   const adding = ed?.kind === 'todo' && ed.id === 'new' && ed.cat === cat.id;
@@ -522,6 +549,28 @@ function setDone(t, done) {
 }
 
 function todoTask(cat, t) {
+  const el = todoTaskEl(cat, t);
+  el.dataset.id = t.id;
+  el.draggable = true;
+  el.addEventListener('dragstart', (e) => {
+    ui.dragTodo = { cat: cat.id, id: t.id };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', t.id);
+    setTimeout(() => el.classList.add('dragging'), 0);
+  });
+  el.addEventListener('dragend', () => { ui.dragTodo = null; ui.dropAt = null; el.classList.remove('dragging'); clearDropMarks(); });
+  return el;
+}
+function moveTodoTask(from, to, id, targetId, after) {
+  const src = state.todo.cats.find((c) => c.id === from.cat), dst = state.todo.cats.find((c) => c.id === to);
+  const [t] = src.tasks.splice(src.tasks.findIndex((x) => x.id === id), 1);
+  let at = targetId ? dst.tasks.findIndex((x) => x.id === targetId) : dst.tasks.length;
+  if (targetId && after) at++;
+  dst.tasks.splice(at, 0, t);
+  ui.dragTodo = null;
+  save(); render();
+}
+function todoTaskEl(cat, t) {
   return h('div', {
     class: `ttask ${t.done ? 'done' : ''}`,
     onclick: (e) => {
@@ -799,7 +848,7 @@ function renderStats() {
       legend.querySelectorAll('.lg').forEach((b) => b.classList.toggle('lock', b.dataset.id === ui.statsLock));
       drawChart(chart);
     },
-  }, t.name)));
+  }, h('span', { class: 'lgt', html: renderText(t.name) }))));
   const arrow = (dir) => h('button', {
     class: 'ib big', title: dir < 0 ? 'Earlier' : 'Later', html: dir < 0 ? ICON.left : ICON.right,
     onclick: () => { ui.statsOffset -= dir; renderStats(); },
@@ -827,7 +876,8 @@ function styleLines() {
   let top = null;
   root.querySelectorAll('.ln').forEach((p) => {
     const hot = focus ? p.dataset.id === focus : p.dataset.id === 'all';
-    p.style.opacity = hot ? 1 : focus ? 0.1 : 0.34;
+    p.style.opacity = hot ? 1 : focus ? 0.35 : 0.9;
+    p.setAttribute('stroke', hot && focus ? p.dataset.bright : p.dataset.dim);
     p.style.strokeWidth = hot ? 3.5 : 2;
     if (hot && focus) top = p;
   });
@@ -869,15 +919,15 @@ function drawChart(el) {
     LINE_STOPS.map((c, i) => svg('stop', { offset: `${(i / (LINE_STOPS.length - 1)) * 100}%`, 'stop-color': c })));
   const clip = svg('clipPath', { id: gid + 'c' }, svg('rect', { x: M.l - 6, y: M.t - 6, width: pw + 12, height: ph + 12 }));
   const lines = svg('g', { 'clip-path': `url(#${gid}c)` });
-  const mk = (id, pts, stroke) => {
+  const mk = (id, pts, stroke, bright) => {
     const runs = []; let cur = [];
     pts.forEach((p, i) => { if (p) cur.push([X(i), Y(p.v)]); else if (cur.length) { runs.push(cur); cur = []; } });
     if (cur.length) runs.push(cur);
-    const g = svg('g', { class: 'ln', 'data-id': id, stroke, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
-      runs.map((r) => svg('path', { d: linePath(r, state.settings.interp), stroke })));
+    const g = svg('g', { class: 'ln', 'data-id': id, 'data-dim': stroke, 'data-bright': bright || stroke, stroke, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
+      runs.map((r) => svg('path', { d: linePath(r, state.settings.interp) })));
     return g;
   };
-  d.series.forEach((s) => lines.append(mk(s.task.id, s.pts, shade(s.task.color, 0.2))));
+  d.series.forEach((s) => lines.append(mk(s.task.id, s.pts, shadeOf(s.task.color, 'dim'), shadeOf(s.task.color, 'bright'))));
   lines.append(mk('all', d.all, `url(#${gid})`));
 
   const sv = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}` }, svg('defs', {}, grad, clip), axis, lines);
@@ -885,7 +935,7 @@ function drawChart(el) {
   const tip = h('div', { class: 'tip', hidden: true });
   const lock = ui.statsLock && d.series.find((s) => s.task.id === ui.statsLock);
   if (lock) {
-    const color = shade(lock.task.color, 0.2);
+    const color = shadeOf(lock.task.color, 'bright');
     lock.pts.forEach((p, i) => {
       if (!p) return;
       const dot = svg('circle', { cx: X(i), cy: Y(p.v), r: 4.5, fill: color, stroke: '#fff', 'stroke-width': 1.5, class: 'pt' });
@@ -923,6 +973,7 @@ function syncShell() {
   });
   $('#tabs').replaceChildren(...VIEWS.map((v) => h('button', { class: ui.view === v ? 'on' : '', onclick: () => switchView(v) }, LABEL[v])));
   $('#title').textContent = LABEL[ui.view];
+  if (typeof applyOpacity === 'function' && $('#op')) { $('#op').value = state.settings.opacity[ui.view]; $('#opv').textContent = `${state.settings.opacity[ui.view]}%`; }
   const prev = VIEWS[(at + VIEWS.length - 1) % VIEWS.length], next = VIEWS[(at + 1) % VIEWS.length];
   $('#arrow-l').replaceChildren(h('div', { class: 'pill' }, h('span', { html: ICON.left }), h('span', {}, LABEL[prev])));
   $('#arrow-r').replaceChildren(h('div', { class: 'pill' }, h('span', { html: ICON.right }), h('span', {}, LABEL[next])));
@@ -940,9 +991,37 @@ function render() {
   if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
 }
 
+const dailyRoot = $('#daily');
+dailyRoot.addEventListener('dragover', (e) => {
+  if (!ui.dragTask) return;
+  e.preventDefault();
+  const rows = [...dailyRoot.querySelectorAll('.drow.task:not(.editor)')].filter((r) => r.dataset.id !== ui.dragTask);
+  const hit = nearestRow(rows, e.clientY);
+  clearDropMarks();
+  ui.dropAt = hit && { id: hit.row.dataset.id, after: hit.after };
+  if (hit) hit.row.classList.add(hit.after ? 'drop-below' : 'drop-above');
+});
+dailyRoot.addEventListener('drop', (e) => {
+  if (!ui.dragTask || !ui.dropAt) return;
+  e.preventDefault();
+  moveTask(ui.dragTask, ui.dropAt.id, ui.dropAt.after);
+});
+
 buildPop();
 $('#gear').innerHTML = ICON.gear;
 $('#gear').addEventListener('click', togglePop);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ui.popOpen) closePop(); });
+// Each window has its own opacity (55% = default look). Todo tasks keep a fixed translucency.
+function applyOpacity() {
+  const o = state.settings.opacity, r = document.documentElement.style;
+  const f = (pct, a) => { const v = pct / 100; return v <= 0.55 ? a * (v / 0.55) : a + (1 - a) * ((v - 0.55) / 0.45); };
+  r.setProperty('--op-task', f(o.daily, 0.82));
+  r.setProperty('--op-cat', f(o.todo, 0.5)); r.setProperty('--op-ch', 0.75 + 0.25 * (o.todo / 100)); // headers stay mostly solid
+  r.setProperty('--op-graph', f(o.stats, 0.34));
+  for (const v of VIEWS) $(`#${v}`).style.setProperty('--op-sh', o[v] / 100);
+  $('#op').value = o[ui.view]; $('#opv').textContent = `${o[ui.view]}%`;
+}
+$('#op').addEventListener('input', (e) => { state.settings.opacity[ui.view] = +e.target.value; applyOpacity(); save(); });
+applyOpacity();
 applyBackground();
 render();
