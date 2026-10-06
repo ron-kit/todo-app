@@ -16,13 +16,14 @@ const ICON = {
   check: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  brush: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4L12 12"/><path d="M10.5 10.5l3 3"/><path d="M13.5 13.5c0 3.2-2.2 6-7 6 1.3-1.1 1.7-2.1 1.7-3.3 0-1.6 1.4-2.7 2.9-2.7z"/></svg>',
   left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
 };
 
 /* ================= state ================= */
 const DEFAULTS = () => ({
-  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', bg: { type: 'default' } },
+  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', statsMode: 'pct', statsRange: 12, bg: { type: 'default' } },
   daily: { tasks: [], checks: {} },
   todo: { cats: [], layout: null },
 });
@@ -31,6 +32,9 @@ let state = load();
 const ui = {
   view: state.settings.open,
   weekOffset: 0,
+  statsOffset: 0,
+  statsLock: null,
+  statsHover: null,
   editor: null, // {kind, id, draft, apply, el}
   drag: null,
   overlay: null,
@@ -48,7 +52,10 @@ function load() {
     }
   } catch { /* fresh state */ }
   normalizeLayout(d.todo);
-  d.daily.tasks.forEach((t, i) => { if (!t.color) t.color = pickTaskColor(d.daily.tasks, i); });
+  d.daily.tasks.forEach((t, i) => {
+    if (!t.color) t.color = pickTaskColor(d.daily.tasks, i);
+    if (!t.created) t.created = Object.keys(d.daily.checks[t.id] || {}).sort()[0] || isoDate(new Date());
+  });
   return d;
 }
 function save() {
@@ -197,7 +204,7 @@ function renderDaily() {
     ui.editor?.kind === 'daily' && ui.editor.id === 'new'
       ? dailyEditorRow(cols)
       : plusButton('large', 'Add task', () => openEditor({ kind: 'daily', id: 'new', draft: { name: '', days: Array(7).fill(state.settings.allDays), color: pickTaskColor(state.daily.tasks, state.daily.tasks.length) }, apply(name) {
-        state.daily.tasks.push({ id: uid(), name, days: this.draft.days.slice(), color: this.draft.color });
+        state.daily.tasks.push({ id: uid(), name, days: this.draft.days.slice(), color: this.draft.color, created: isoDate(new Date()) });
       } })));
 
   root.replaceChildren(
@@ -222,7 +229,7 @@ function dailyRow(t, cols) {
   h('span', { class: 'ttl', html: renderText(t.name) }),
   actions(() => {
     const i = state.daily.tasks.indexOf(t);
-    const copy = { id: uid(), name: t.name, days: t.days.slice(), color: t.color };
+    const copy = { id: uid(), name: t.name, days: t.days.slice(), color: t.color, created: isoDate(new Date()) };
     state.daily.tasks.splice(i + 1, 0, copy);
     copy.color = pickTaskColor(state.daily.tasks, i + 1);
     save(); render();
@@ -341,7 +348,15 @@ function renderTodo() {
   board.addEventListener('dragleave', (e) => { if (!board.contains(e.relatedTarget)) hideOverlay(); });
   ui.board = board;
   ui.overlay = null;
-  $('#todo').replaceChildren(board);
+  const avg = (tasks) => {
+    const ds = tasks.filter((t) => t.completed).map((t) => (new Date(t.completed) - new Date(t.created)) / 864e5);
+    return ds.length ? ds.reduce((a, b) => a + b, 0) / ds.length : null;
+  };
+  const fmt = (v) => (v == null ? '–' : `${Math.round(v * 10) / 10}d`);
+  const chip = (label, v, color) => h('div', { class: 'tchip', title: `Average days to complete: ${label}`, vars: color ? { '--c': color } : {} }, h('span', {}, label), h('b', {}, fmt(v)));
+  $('#todo').replaceChildren(board, h('div', { class: 'tstats' },
+    chip('All', avg(state.todo.cats.flatMap((c) => c.tasks))),
+    state.todo.cats.map((c) => chip(c.name, avg(c.tasks), c.color))));
 }
 
 function renderNode(n) {
@@ -554,10 +569,11 @@ function catModal(cat) {
 
 /* ================= settings ================= */
 const SETTINGS = [
-  { key: 'open', title: 'Open at', a: ['Daily', 'daily'], b: ['Todo', 'todo'] },
-  { key: 'weekStart', title: 'Week starts on', a: ['Monday', 'mon'], b: ['Sunday', 'sun'] },
-  { key: 'allDays', title: 'Enable all days for new tasks', a: ['No', false], b: ['Yes', true] },
-  { key: 'switcher', title: 'Window switcher', a: ['Tabs', 'tabs'], b: ['Arrows', 'arrows'] },
+  { key: 'open', title: 'Open at', opts: [['Daily', 'daily'], ['Todo', 'todo'], ['Stats', 'stats']] },
+  { key: 'weekStart', title: 'Week starts on', opts: [['Monday', 'mon'], ['Sunday', 'sun']] },
+  { key: 'allDays', title: 'Enable all days for new tasks', opts: [['No', false], ['Yes', true]] },
+  { key: 'switcher', title: 'Window switcher', opts: [['Tabs', 'tabs'], ['Arrows', 'arrows']] },
+  { key: 'interp', title: 'Graph interpolation', circles: true, opts: [['x<sup>1</sup>', 'linear'], ['x<sup>2</sup>', 'quadratic'], ['x<sup>3</sup>', 'cubic']] },
 ];
 function setSetting(key, value) {
   state.settings[key] = value;
@@ -576,29 +592,26 @@ function setBackground(bg) {
 // Update the existing controls in place so the switches animate.
 function syncPop() {
   for (const s of SETTINGS) {
-    const isB = state.settings[s.key] === s.b[1];
+    const idx = s.opts.findIndex((o) => o[1] === state.settings[s.key]);
     const row = $(`#pop [data-key="${s.key}"]`);
-    row.querySelector('.track').classList.toggle('on', isB);
-    row.querySelector('.track').setAttribute('aria-checked', String(isB));
-    row.querySelectorAll('.opt')[0].classList.toggle('cur', !isB);
-    row.querySelectorAll('.opt')[1].classList.toggle('cur', isB);
+    if (s.opts.length === 2 && !s.circles) {
+      row.querySelector('.track').classList.toggle('on', idx === 1);
+      row.querySelector('.track').setAttribute('aria-checked', String(idx === 1));
+      row.querySelectorAll('.opt').forEach((o, i) => o.classList.toggle('cur', i === idx));
+    } else {
+      row.querySelectorAll('.pick').forEach((b, i) => b.classList.toggle('sel', i === idx));
+    }
   }
   const bg = state.settings.bg;
-  $('#pop .bgrow').replaceChildren(...[
-    ['Default', 'default', () => setBackground({ type: 'default' }), 'Biodome'],
-    ['Image', 'file', async () => {
+  const isColor = (v) => bg.type === 'color' && bg.value === v;
+  $('#pop .bgrow').replaceChildren(
+    h('button', { class: `bgbtn white ${isColor('#ffffff') ? 'sel' : ''}`, title: 'White', onclick: () => setBackground({ type: 'color', value: '#ffffff' }) }),
+    h('button', { class: `bgbtn black ${isColor('#000000') ? 'sel' : ''}`, title: 'Black', onclick: () => setBackground({ type: 'color', value: '#000000' }) }),
+    h('button', { class: `bgbtn rainbow ${bg.type === 'color' && !['#ffffff', '#000000'].includes(bg.value) ? 'sel' : ''}`, title: 'Pick a color', onclick: () => { ui.bgPicker = !ui.bgPicker; syncPop(); } }),
+    h('button', { class: `bgbtn ${bg.type === 'file' ? 'sel' : ''}`, title: 'Choose an image', html: ICON.brush, onclick: async () => {
       const url = await window.api?.chooseBackground();
       if (url) setBackground({ type: 'file', value: `${url}?t=${Date.now()}` });
-    }, 'Image…'],
-    ['Black', 'black', () => setBackground({ type: 'color', value: '#000000' })],
-    ['White', 'white', () => setBackground({ type: 'color', value: '#ffffff' })],
-    ['Color', 'pick', () => { ui.bgPicker = !ui.bgPicker; syncPop(); }, 'Color…'],
-  ].map(([title, kind, fn, text]) => {
-    const on = (kind === 'default' && bg.type === 'default') || (kind === 'file' && bg.type === 'file')
-      || (kind === 'black' && bg.value === '#000000') || (kind === 'white' && bg.value === '#ffffff')
-      || (kind === 'pick' && bg.type === 'color' && !['#000000', '#ffffff'].includes(bg.value));
-    return h('button', { class: `bgbtn ${kind} ${on ? 'sel' : ''}`, title, onclick: fn, vars: kind === 'pick' && on ? { '--c': bg.value } : {} }, text || '');
-  }));
+    } }));
   $('#pop .bgcols').hidden = !ui.bgPicker;
   $('#pop .bgcols').replaceChildren(...BG_COLORS.map((c) => h('button', {
     class: `swatch ${bg.value === c ? 'sel' : ''}`, vars: { '--c': c }, title: c,
@@ -606,15 +619,19 @@ function syncPop() {
   })));
 }
 function buildPop() {
+  const control = (s) => {
+    if (s.circles) return h('div', { class: 'circs' }, s.opts.map(([l, v]) => h('button', { class: 'pick circ', title: v, html: l, onclick: () => setSetting(s.key, v) })));
+    if (s.opts.length > 2) return h('div', { class: 'seg' }, s.opts.map(([l, v]) => h('button', { class: 'pick', onclick: () => setSetting(s.key, v) }, l)));
+    const [a, b] = s.opts;
+    return h('div', { class: 'sw' },
+      h('span', { class: 'opt', onclick: () => setSetting(s.key, a[1]) }, a[0]),
+      h('button', { class: 'track', role: 'switch', 'aria-label': s.title, onclick: () => setSetting(s.key, state.settings[s.key] === b[1] ? a[1] : b[1]) }),
+      h('span', { class: 'opt', onclick: () => setSetting(s.key, b[1]) }, b[0]));
+  };
   $('#pop').replaceChildren(
-    ...SETTINGS.map((s) => h('div', { class: 'srow', 'data-key': s.key },
-      h('span', { class: 'sl' }, s.title),
-      h('div', { class: 'sw' },
-        h('span', { class: 'opt', onclick: () => setSetting(s.key, s.a[1]) }, s.a[0]),
-        h('button', { class: 'track', role: 'switch', 'aria-label': s.title, onclick: () => setSetting(s.key, state.settings[s.key] === s.b[1] ? s.a[1] : s.b[1]) }),
-        h('span', { class: 'opt', onclick: () => setSetting(s.key, s.b[1]) }, s.b[0])))),
+    ...SETTINGS.map((s) => h('div', { class: 'srow', 'data-key': s.key }, h('span', { class: 'sl' }, s.title), control(s))),
     h('div', { class: 'srow col' }, h('span', { class: 'sl' }, 'Background'), h('div', { class: 'bgrow' }), h('div', { class: 'bgcols', hidden: true })),
-    h('div', { class: 'note' }, 'Task names support Markdown (**bold**, *italic*, `code`) and LaTeX ($x^2$).'));
+    h('div', { class: 'note' }, 'Task names support Markdown and LaTeX.'));
   syncPop();
 }
 function closePop() { ui.popOpen = false; $('#pop').hidden = true; }
@@ -624,9 +641,201 @@ function togglePop() {
   if (ui.popOpen) syncPop();
 }
 
+/* ================= STATS ================= */
+const LINE_STOPS = ['#e07b78', '#e0b84a', '#6fb87a', '#4fb3b0', '#5f93d6', '#9a78c4'];
+const RANGES = [4, 12, 26, 52];
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svg(tag, attrs, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+  el.append(...kids.flat().filter((k) => k != null));
+  return el;
+}
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16), m = (v) => Math.round(v * (1 - f));
+  return `#${((1 << 24) | (m(n >> 16) << 16) | (m((n >> 8) & 255) << 8) | m(n & 255)).toString(16).slice(1)}`;
+}
+function weekStartOf(date) {
+  const startDow = state.settings.weekStart === 'mon' ? 1 : 0;
+  const d = new Date(date); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() - startDow + 7) % 7));
+  return d;
+}
+// Per week: completed checks vs. days the task(s) were enabled (from creation up to today).
+function statsData() {
+  const N = state.settings.statsRange;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayIso = isoDate(today);
+  const last = weekStartOf(today); last.setDate(last.getDate() - ui.statsOffset * N * 7);
+  const weeks = Array.from({ length: N }, (_, i) => { const d = new Date(last); d.setDate(last.getDate() - (N - 1 - i) * 7); return d; });
+  const pct = state.settings.statsMode === 'pct';
+  const calc = (tasks, w) => {
+    let c = 0, p = 0;
+    for (const t of tasks) {
+      const checks = state.daily.checks[t.id] || {};
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(w); d.setDate(w.getDate() + i);
+        const iso = isoDate(d);
+        if (iso > todayIso || iso < (t.created || '') || !t.days[d.getDay()]) continue;
+        p++; if (checks[iso]) c++;
+      }
+    }
+    return p ? { c, p, v: pct ? (c / p) * 100 : c } : null;
+  };
+  const tasks = state.daily.tasks;
+  const created = tasks.map((t) => t.created).filter(Boolean).sort()[0];
+  return {
+    weeks, pct,
+    series: tasks.map((t) => ({ task: t, pts: weeks.map((w) => calc([t], w)) })),
+    all: weeks.map((w) => calc(tasks, w)),
+    atStart: !created || isoDate(weeks[0]) <= isoDate(weekStartOf(new Date(`${created}T00:00:00`))),
+  };
+}
+
+function linePath(pts, mode) {
+  if (pts.length === 1) return `M${pts[0][0]} ${pts[0][1]}h.01`;
+  const f = (n) => Math.round(n * 100) / 100;
+  let d = `M${f(pts[0][0])} ${f(pts[0][1])}`;
+  if (mode === 'linear') { for (const p of pts.slice(1)) d += `L${f(p[0])} ${f(p[1])}`; return d; }
+  const slope = pts.map((p, i) => {
+    const a = pts[Math.max(i - 1, 0)], b = pts[Math.min(i + 1, pts.length - 1)];
+    // flatten at local extremes so curves never overshoot the data
+    if (i && i < pts.length - 1 && (a[1] - p[1]) * (b[1] - p[1]) >= 0) return 0;
+    return (b[1] - a[1]) / (b[0] - a[0]);
+  });
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], dx = x1 - x0;
+    if (mode === 'cubic') d += `C${f(x0 + dx / 3)} ${f(y0 + (slope[i] * dx) / 3)} ${f(x1 - dx / 3)} ${f(y1 - (slope[i + 1] * dx) / 3)} ${f(x1)} ${f(y1)}`;
+    else d += `Q${f((x0 + x1) / 2)} ${f((y0 + slope[i] * dx / 2 + y1 - slope[i + 1] * dx / 2) / 2)} ${f(x1)} ${f(y1)}`;
+  }
+  return d;
+}
+
+function renderStats() {
+  const root = $('#stats');
+  const st = state.settings;
+  if (ui.statsLock && !state.daily.tasks.some((t) => t.id === ui.statsLock)) ui.statsLock = null;
+  ui.statsHover = null;
+  const chart = h('div', { class: 'chart' });
+  const mode = st.statsMode === 'pct';
+  const legend = h('div', { class: 'sc-legend' }, state.daily.tasks.map((t) => h('button', {
+    class: `lg ${ui.statsLock === t.id ? 'lock' : ''}`, vars: { '--c': t.color, '--on': textOn(t.color) }, title: t.name, 'data-id': t.id,
+    onmouseenter: () => { ui.statsHover = t.id; styleLines(); },
+    onmouseleave: () => { ui.statsHover = null; styleLines(); },
+    onclick: () => {
+      ui.statsLock = ui.statsLock === t.id ? null : t.id;
+      legend.querySelectorAll('.lg').forEach((b) => b.classList.toggle('lock', b.dataset.id === ui.statsLock));
+      drawChart(chart);
+    },
+  }, t.name)));
+  const arrow = (dir) => h('button', {
+    class: 'ib big', title: dir < 0 ? 'Earlier' : 'Later', html: dir < 0 ? ICON.left : ICON.right,
+    onclick: () => { ui.statsOffset = Math.max(0, ui.statsOffset - dir); renderStats(); },
+  });
+  const left = arrow(-1), right = arrow(1);
+  const d0 = statsData();
+  left.disabled = d0.atStart; right.disabled = ui.statsOffset === 0;
+  const track = h('button', { class: `track ${mode ? '' : 'on'}`, role: 'switch', 'aria-label': 'Percentage or raw count', onclick: () => setSetting('statsMode', mode ? 'raw' : 'pct') });
+  root.replaceChildren(h('div', { class: 'stats-card' },
+    h('div', { class: 'sc-head' },
+      h('h2', {}, 'Average completion'),
+      h('div', { class: 'seg' }, RANGES.map((n) => h('button', { class: n === st.statsRange ? 'sel' : '', title: `${n} weeks`, onclick: () => { st.statsRange = n; ui.statsOffset = 0; save(); renderStats(); } }, `${n}w`))),
+      h('div', { class: 'sw' }, h('span', { class: `opt ${mode ? 'cur' : ''}` }, 'Percent'), track, h('span', { class: `opt ${mode ? '' : 'cur'}` }, 'Count'))),
+    h('div', { class: 'sc-chart' }, left, chart, right),
+    legend));
+  ui.statsRO?.disconnect();
+  ui.statsRO = new ResizeObserver(() => drawChart(chart));
+  ui.statsRO.observe(chart);
+}
+
+function styleLines() {
+  const focus = ui.statsLock || ui.statsHover;
+  const root = $('#stats');
+  let top = null;
+  root.querySelectorAll('.ln').forEach((p) => {
+    const hot = focus ? p.dataset.id === focus : p.dataset.id === 'all';
+    p.style.opacity = hot ? 1 : focus ? 0.1 : 0.26;
+    p.style.strokeWidth = hot ? 3.5 : 2;
+    if (hot && focus) top = p;
+  });
+  if (top) top.parentNode.append(top);
+  root.querySelectorAll('.lg').forEach((b) => b.classList.toggle('dim', !!focus && b.dataset.id !== focus));
+}
+
+function drawChart(el) {
+  const W = el.clientWidth, H = el.clientHeight;
+  if (W < 50 || H < 50) return;
+  const d = statsData();
+  const M = { l: 46, r: 18, t: 14, b: 44 };
+  const pw = W - M.l - M.r, ph = H - M.t - M.b, N = d.weeks.length;
+  const vals = [...d.all, ...d.series.flatMap((s) => s.pts)].filter(Boolean).map((p) => p.v);
+  let ymax = 100, step = 25;
+  if (!d.pct) {
+    const mx = Math.max(1, ...vals);
+    step = [1, 2, 5, 10, 20, 50, 100, 200, 500].find((s) => mx / s <= 4) || 1000;
+    ymax = Math.ceil(mx / step) * step;
+  }
+  const X = (i) => (N === 1 ? M.l + pw / 2 : M.l + (i * pw) / (N - 1));
+  const Y = (v) => M.t + ph * (1 - v / ymax);
+  const every = Math.ceil(N / Math.max(1, Math.floor(pw / 62)));
+
+  const axis = svg('g', { class: 'axis' });
+  for (let v = 0; v <= ymax + 1e-9; v += step) {
+    axis.append(
+      svg('line', { x1: M.l, x2: W - M.r, y1: Y(v), y2: Y(v), class: 'grid' }),
+      Object.assign(svg('text', { x: M.l - 8, y: Y(v) + 4, 'text-anchor': 'end' }), { textContent: d.pct ? `${v}%` : v }));
+  }
+  d.weeks.forEach((w, i) => {
+    if ((N - 1 - i) % every) return;
+    axis.append(Object.assign(svg('text', { x: X(i), y: H - M.b + 18, 'text-anchor': 'middle' }), { textContent: `${MONTHS[w.getMonth()]} ${w.getDate()}` }));
+  });
+  axis.append(Object.assign(svg('text', { x: M.l + pw / 2, y: H - 6, 'text-anchor': 'middle', class: 'cap' }), { textContent: 'Week of' }));
+
+  const gid = 'g' + uid();
+  const grad = svg('linearGradient', { id: gid, gradientUnits: 'userSpaceOnUse', x1: M.l, x2: W - M.r, y1: 0, y2: 0 },
+    LINE_STOPS.map((c, i) => svg('stop', { offset: `${(i / (LINE_STOPS.length - 1)) * 100}%`, 'stop-color': c })));
+  const clip = svg('clipPath', { id: gid + 'c' }, svg('rect', { x: M.l - 6, y: M.t - 6, width: pw + 12, height: ph + 12 }));
+  const lines = svg('g', { 'clip-path': `url(#${gid}c)` });
+  const mk = (id, pts, stroke) => {
+    const runs = []; let cur = [];
+    pts.forEach((p, i) => { if (p) cur.push([X(i), Y(p.v)]); else if (cur.length) { runs.push(cur); cur = []; } });
+    if (cur.length) runs.push(cur);
+    const g = svg('g', { class: 'ln', 'data-id': id, stroke, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
+      runs.map((r) => svg('path', { d: linePath(r, state.settings.interp), stroke })));
+    return g;
+  };
+  d.series.forEach((s) => lines.append(mk(s.task.id, s.pts, shade(s.task.color, 0.2))));
+  lines.append(mk('all', d.all, `url(#${gid})`));
+
+  const sv = svg('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}` }, svg('defs', {}, grad, clip), axis, lines);
+  // locked line: hoverable points
+  const tip = h('div', { class: 'tip', hidden: true });
+  const lock = ui.statsLock && d.series.find((s) => s.task.id === ui.statsLock);
+  if (lock) {
+    const color = shade(lock.task.color, 0.2);
+    lock.pts.forEach((p, i) => {
+      if (!p) return;
+      const dot = svg('circle', { cx: X(i), cy: Y(p.v), r: 4.5, fill: color, stroke: '#fff', 'stroke-width': 1.5, class: 'pt' });
+      const hit = svg('circle', { cx: X(i), cy: Y(p.v), r: 11, fill: 'transparent' });
+      hit.addEventListener('mouseenter', () => {
+        const w = d.weeks[i];
+        tip.textContent = `${MONTHS[w.getMonth()]} ${w.getDate()}: ${d.pct ? `${Math.round(p.v)}% (${p.c}/${p.p})` : `${p.c} of ${p.p}`}`;
+        tip.hidden = false;
+        tip.style.left = `${Math.min(Math.max(X(i), 70), W - 70)}px`; tip.style.top = `${Y(p.v) - 12}px`;
+        dot.setAttribute('r', 6.5);
+      });
+      hit.addEventListener('mouseleave', () => { tip.hidden = true; dot.setAttribute('r', 4.5); });
+      sv.append(dot, hit);
+    });
+  }
+  el.replaceChildren(sv, tip);
+  if (!state.daily.tasks.length) el.append(h('div', { class: 'chart-empty' }, 'Add tasks in Daily to see stats'));
+  styleLines();
+}
+
 /* ================= shell ================= */
-const VIEWS = ['daily', 'todo'];
-const LABEL = { daily: 'Daily', todo: 'Todo' };
+const VIEWS = ['daily', 'todo', 'stats'];
+const LABEL = { daily: 'Daily', todo: 'Todo', stats: 'Stats' };
 function switchView(v) {
   if (ui.editor) commitEditor();
   ui.view = v;
@@ -634,21 +843,26 @@ function switchView(v) {
 }
 function syncShell() {
   document.body.dataset.switcher = state.settings.switcher;
-  for (const v of VIEWS) $(`#${v}`).classList.toggle('active', ui.view === v);
+  const at = VIEWS.indexOf(ui.view);
+  VIEWS.forEach((v, i) => {
+    const el = $(`#${v}`);
+    el.classList.toggle('active', i === at);
+    el.dataset.rel = Math.sign(i - at);
+  });
   $('#tabs').replaceChildren(...VIEWS.map((v) => h('button', { class: ui.view === v ? 'on' : '', onclick: () => switchView(v) }, LABEL[v])));
   $('#title').textContent = LABEL[ui.view];
-  const other = ui.view === 'daily' ? 'todo' : 'daily';
-  const l = $('#arrow-l'), r = $('#arrow-r');
-  l.hidden = ui.view !== 'todo'; r.hidden = ui.view !== 'daily';
-  l.replaceChildren(h('span', { html: ICON.left }), h('span', {}, LABEL[other]));
-  r.replaceChildren(h('span', { html: ICON.right }), h('span', {}, LABEL[other]));
-  l.onclick = r.onclick = () => switchView(other);
+  const prev = VIEWS[(at + VIEWS.length - 1) % VIEWS.length], next = VIEWS[(at + 1) % VIEWS.length];
+  $('#arrow-l').replaceChildren(h('div', { class: 'pill' }, h('span', { html: ICON.left }), h('span', {}, LABEL[prev])));
+  $('#arrow-r').replaceChildren(h('div', { class: 'pill' }, h('span', { html: ICON.right }), h('span', {}, LABEL[next])));
+  $('#arrow-l').onclick = () => switchView(prev);
+  $('#arrow-r').onclick = () => switchView(next);
 }
 function applySettings() { syncShell(); applyBackground(); }
 
 function render() {
   renderDaily();
   renderTodo();
+  renderStats();
   syncShell();
   const i = ui.editor && $('input.ed');
   if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
