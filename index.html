@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tasks</title>
+  <link rel="stylesheet" href="node_modules/katex/dist/katex.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top">
+    <nav id="tabs" aria-label="Window"></nav>
+    <h1 id="title"></h1>
+    <button id="gear" class="ib big" title="Settings" aria-label="Settings"></button>
+  </header>
+  <button id="arrow-l" class="arrow" aria-label="Previous window"></button>
+  <button id="arrow-r" class="arrow" aria-label="Next window"></button>
+  <main id="views">
+    <section id="daily" class="view" aria-label="Daily"></section>
+    <section id="todo" class="view" aria-label="Todo"></section>
+  </main>
+  <div id="pop" hidden></div>
+  <script src="node_modules/katex/dist/katex.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
