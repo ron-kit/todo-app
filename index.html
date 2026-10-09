@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: file:; script-src 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tasks</title>
+  <title>Everything Tracker</title>
   <link rel="stylesheet" href="node_modules/katex/dist/katex.min.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -21,10 +21,15 @@
     <section id="daily" class="view" aria-label="Daily"></section>
     <section id="todo" class="view" aria-label="Todo"></section>
     <section id="stats" class="view" aria-label="Stats"></section>
+    <section id="notes" class="view" aria-label="Notes"></section>
+    <section id="diet" class="view" aria-label="Diet"></section>
   </main>
   <div id="opbar"><label for="op">Opacity</label><input id="op" type="range" min="0" max="100" step="1"><output id="opv"></output></div>
   <div id="pop" hidden></div>
   <script src="node_modules/katex/dist/katex.min.js"></script>
+  <script src="foods.js"></script>
+  <script src="notes.js"></script>
+  <script src="diet.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

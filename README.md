@@ -1,19 +1,18 @@
 # todo app
 ![Home page](assets/app.png)
 
-Hybrid daily task tracker and todo list with statistics tracking.
+Hybrid daily task tracker, diet planner, todo list, and notebook.
 
-Completely vibe coded to fill a niche I couldn't find elsewhere.
+Internally called the Everything Tracker.
 
 The default background is a photo of the Montreal Biodome I took in summer 2025.
 
 
 ## Why
 
-Dedicated notes apps are too simplistic, and obsidian/notion have to be configured to work properly.
+Dedicated notes apps are too simplistic, obsidian/notion have to be configured to work properly, and neither had many features I wanted to use.
 
- This app aims to be a middle ground.
-
+This app aims to be a middle ground, having several premade modes, as well as many functions I have not seen before in any other tool.
 
 ## Run
 
@@ -23,7 +22,10 @@ Must have node installed.
 
 ## Use
 
-Press plus to add tasks. It's pretty simple and intuitive.
++ Daily & Todo: press + to add tasks, their days are editable
++ Stats: visualize your consistency
++ Notes: mini obsidian with folders and references (to other tabs!)
++ Diet: meal planner with recipe creation
 
 All text supports ***markdown*** and $\LaTeX.$
 

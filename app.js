@@ -38,10 +38,13 @@ const ICON = {
 };
 
 /* ================= state ================= */
+const ALL_VIEWS = ['daily', 'todo', 'stats', 'notes', 'diet'];
 const DEFAULTS = () => ({
-  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', alertDays: 7, opacity: { daily: 55, todo: 55, stats: 55 }, statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
+  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', alertDays: 7, dietThreshold: 10, usdaKey: '', tabOrder: ['daily', 'todo', 'stats', 'notes', 'diet'], opacity: { daily: 55, todo: 55, stats: 55, notes: 55, diet: 55 }, statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
   daily: { tasks: [], checks: {} },
   todo: { cats: [], layout: null },
+  notes: { items: [], folders: [], sel: null, mode: 'edit', seeded: false },
+  diet: { foods: [], recipes: [], log: {}, presets: [], goal: 'maint' },
 });
 
 let state = load();
@@ -57,18 +60,31 @@ const ui = {
   popOpen: false,
 };
 
+// keep the saved order, drop unknown names, and append any windows added in newer versions
+function normalizeOrder(order) {
+  const o = (Array.isArray(order) ? order : []).filter((v, i, a) => ALL_VIEWS.includes(v) && a.indexOf(v) === i);
+  return [...o, ...ALL_VIEWS.filter((v) => !o.includes(v))];
+}
+
 function load() {
   const d = DEFAULTS();
   try {
-    const s = JSON.parse(localStorage.getItem(STORE_KEY));
+    // the app's data file is the source of truth; localStorage only seeds a first run after upgrading
+    let raw = null;
+    try { raw = window.api ? window.api.loadState() : null; } catch { /* fall through */ }
+    const s = JSON.parse(raw || localStorage.getItem(STORE_KEY));
     if (s) {
       Object.assign(d.settings, s.settings);
       Object.assign(d.daily, s.daily);
       Object.assign(d.todo, s.todo);
+      Object.assign(d.notes, s.notes);
+      Object.assign(d.diet, s.diet);
     }
   } catch { /* fresh state */ }
   if (typeof d.settings.opacity === 'number') d.settings.opacity = { daily: d.settings.opacity, todo: d.settings.opacity, stats: d.settings.opacity };
-  d.settings.opacity = { daily: 55, todo: 55, stats: 55, ...d.settings.opacity };
+  d.settings.opacity = { daily: 55, todo: 55, stats: 55, notes: 55, diet: 55, ...d.settings.opacity };
+  d.settings.tabOrder = normalizeOrder(d.settings.tabOrder);
+  seedNotes(d.notes);
   normalizeLayout(d.todo);
   d.todo.cats.forEach((c) => { c.color = migrateColor(c.color); });
   d.daily.tasks.forEach((t, i) => {
@@ -77,9 +93,18 @@ function load() {
   });
   return d;
 }
+let saveTimer = null;
 function save() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushSave, 150);
 }
+function flushSave() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const json = JSON.stringify(state);
+  try { window.api?.saveState(json); } catch { /* ignore */ }
+  try { localStorage.setItem(STORE_KEY, json); } catch { /* ignore */ }
+}
+window.addEventListener('beforeunload', () => { if (saveTimer) flushSave(); });
 
 /* ================= helpers ================= */
 const $ = (s, r = document) => r.querySelector(s);
@@ -141,7 +166,7 @@ function textOn(hex) {
 }
 
 /* ================= typesetting: markdown-lite + LaTeX (KaTeX) ================= */
-function renderText(src) {
+function renderText(src, opts = {}) {
   const stash = [];
   const keep = (html) => `${stash.push(html) - 1}`;
   let s = src.replace(/`([^`\n]+)`/g, (_, c) => keep(`<code>${esc(c)}</code>`));
@@ -151,12 +176,18 @@ function renderText(src) {
     try { return keep(katex.renderToString(tex, { displayMode: block != null, throwOnError: false })); }
     catch { return keep(esc(m)); }
   });
+  if (opts.notes) {
+    s = s.replace(/\{\{\s*(daily|todo|diet)\s*:\s*([^}]*?)\s*\}\}/gi, (_, kind, arg) => keep(liveChip(kind.toLowerCase(), arg)));
+    s = s.replace(/\[\[([^\]\n|]+)(?:\|([^\]\n]+))?\]\]/g, (_, target, alias) =>
+      keep(`<a class="wikilink${noteByTitle(target) ? '' : ' missing'}" data-note="${esc(target.trim())}">${esc((alias || target).trim())}</a>`));
+  }
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, text, url) =>
     keep(`<a href="${esc(url).replace(/"/g, '%22')}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`));
   s = esc(s)
     .replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>')
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?:;]|$)/g, '$1<i>$2</i>')
     .replace(/~~(.+?)~~/g, '<s>$1</s>');
   // restore stashed pieces (link text may itself contain stashed math/code)
   for (let i = 0; i < 3 && //.test(s); i++) s = s.replace(/(\d+)/g, (_, n) => stash[n]);
@@ -688,7 +719,7 @@ function catModal(cat) {
 
 /* ================= settings ================= */
 const SETTINGS = [
-  { key: 'open', title: 'Open at', opts: [['Daily', 'daily'], ['Todo', 'todo'], ['Stats', 'stats']] },
+  { key: 'open', title: 'Open at', opts: [['Daily', 'daily'], ['Todo', 'todo'], ['Stats', 'stats'], ['Notes', 'notes'], ['Diet', 'diet']] },
   { key: 'weekStart', title: 'Week starts on', opts: [['Monday', 'mon'], ['Sunday', 'sun']] },
   { key: 'allDays', title: 'New tasks are daily', opts: [['No', false], ['Yes', true]] },
   { key: 'switcher', title: 'Window switcher', opts: [['Tabs', 'tabs'], ['Arrows', 'arrows']] },
@@ -721,8 +752,10 @@ function syncPop() {
       row.querySelectorAll('.pick').forEach((b, i) => b.classList.toggle('sel', i === idx));
     }
   }
-  const ni = $('#pop .numinp');
-  if (ni && document.activeElement !== ni) ni.value = state.settings.alertDays;
+  for (const [sel, key] of [['.numinp.alert', 'alertDays'], ['.numinp.thr', 'dietThreshold'], ['.txtinp', 'usdaKey']]) {
+    const el = $(`#pop ${sel}`);
+    if (el && document.activeElement !== el) el.value = state.settings[key];
+  }
   const bg = state.settings.bg;
   const isColor = (v) => bg.type === 'color' && bg.value === v;
   $('#pop .bgrow').replaceChildren(
@@ -752,11 +785,29 @@ function buildPop() {
   $('#pop').replaceChildren(
     ...SETTINGS.map((s) => h('div', { class: 'srow', 'data-key': s.key }, h('span', { class: 'sl' }, s.title), control(s))),
     h('div', { class: 'srow' }, h('span', { class: 'sl' }, 'Days before alert'),
-      h('input', { class: 'numinp', type: 'number', min: '0', step: '1', title: 'Todo tasks start turning red this many days before their deadline',
+      h('input', { class: 'numinp alert', type: 'number', min: '0', step: '1', title: 'Todo tasks start turning red this many days before their deadline',
         oninput: (e) => { const n = parseInt(e.target.value, 10); if (n >= 0) setSetting('alertDays', n); } })),
+    h('div', { class: 'srow' }, h('span', { class: 'sl' }, 'Diet warning threshold'),
+      h('span', { class: 'unit-in' }, h('input', { class: 'numinp thr', type: 'number', min: '0', step: '1', title: 'Warn when a goal is exceeded by more than this percent',
+        oninput: (e) => { const n = parseFloat(e.target.value); if (n >= 0) setSetting('dietThreshold', n); } }), '%')),
     h('div', { class: 'srow col' }, h('span', { class: 'sl' }, 'Background'), h('div', { class: 'bgrow' }), h('div', { class: 'bgcols', hidden: true })),
+    h('div', { class: 'srow col' }, h('span', { class: 'sl' }, 'Data'),
+      h('div', { class: 'bgrow' },
+        h('button', { class: 'bgbtn txt', title: 'Save a copy of all your data', onclick: async () => { flushSave(); await window.api?.exportData(JSON.stringify(state, null, 2)); } }, 'Export'),
+        h('button', { class: 'bgbtn txt', title: 'Replace everything with a saved file (your current data is backed up first)', onclick: importData }, 'Import'),
+        h('button', { class: 'bgbtn txt', title: 'Open the folder with automatic backups', onclick: () => window.api?.openBackups() }, 'Backups'))),
     h('div', { class: 'note' }, 'Task names support Markdown and LaTeX.'));
   syncPop();
+}
+async function importData() {
+  try {
+    flushSave();
+    const txt = await window.api.importData();
+    if (!txt) return;
+    if (!confirm('Replace everything with the contents of this file? Your current data is backed up first.')) return;
+    window.api.saveState(txt);
+    location.reload();
+  } catch (err) { alert(String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); }
 }
 function closePop() { ui.popOpen = false; $('#pop').hidden = true; }
 function togglePop() {
@@ -807,30 +858,32 @@ function bucketLabel(d, g) {
 }
 // One point per period: checks done vs. days a task was enabled. A task counts from its creation
 // date, or from its earliest check if that is older, so retroactively entered data always shows.
+function completionOf(tasks, a, b) {
+  const todayIso = isoDate(new Date());
+  let c = 0, p = 0;
+  for (const t of tasks) {
+    const checks = state.daily.checks[t.id] || {};
+    const first = Object.keys(checks).sort()[0];
+    const start = first && first < (t.created || '9') ? first : t.created || todayIso;
+    for (const d = new Date(a); d < b; d.setDate(d.getDate() + 1)) {
+      const iso = isoDate(d);
+      if (iso < start || !t.days[d.getDay()]) continue;
+      const on = !!checks[iso];
+      if (iso > todayIso && !on) continue;
+      p++; if (on) c++;
+    }
+  }
+  return p ? { c, p } : null;
+}
 function statsData() {
   const g = state.settings.statsGran, N = RANGE_OPTS[g][state.settings.statsRange];
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayIso = isoDate(today);
   const last = shiftBucket(bucketStart(today, g), g, -ui.statsOffset * N);
   const starts = Array.from({ length: N }, (_, i) => shiftBucket(last, g, i - (N - 1)));
   const pct = state.settings.statsMode === 'pct';
-  const from = new Map(state.daily.tasks.map((t) => {
-    const first = Object.keys(state.daily.checks[t.id] || {}).sort()[0];
-    return [t.id, first && first < (t.created || '9') ? first : t.created || todayIso];
-  }));
   const calc = (tasks, a, b) => {
-    let c = 0, p = 0;
-    for (const t of tasks) {
-      const checks = state.daily.checks[t.id] || {}, start = from.get(t.id);
-      for (const d = new Date(a); d < b; d.setDate(d.getDate() + 1)) {
-        const iso = isoDate(d);
-        if (iso < start || !t.days[d.getDay()]) continue;
-        const on = !!checks[iso];
-        if (iso > todayIso && !on) continue;
-        p++; if (on) c++;
-      }
-    }
-    return p ? { c, p, v: pct ? (c / p) * 100 : c } : null;
+    const r = completionOf(tasks, a, b);
+    return r ? { ...r, v: pct ? (r.c / r.p) * 100 : r.c } : null;
   };
   const tasks = state.daily.tasks;
   const span = (i) => [starts[i], shiftBucket(starts[i], g, 1)];
@@ -995,8 +1048,9 @@ function drawChart(el) {
 }
 
 /* ================= shell ================= */
-const VIEWS = ['daily', 'todo', 'stats'];
-const LABEL = { daily: 'Daily', todo: 'Todo', stats: 'Stats' };
+const VIEWS = ALL_VIEWS;
+const viewOrder = () => state.settings.tabOrder;
+const LABEL = { daily: 'Daily', todo: 'Todo', stats: 'Stats', notes: 'Notes', diet: 'Diet' };
 function switchView(v) {
   if (ui.editor) commitEditor();
   const opening = v === 'todo' && ui.view !== 'todo';
@@ -1006,27 +1060,52 @@ function switchView(v) {
 }
 function syncShell() {
   document.body.dataset.switcher = state.settings.switcher;
-  const at = VIEWS.indexOf(ui.view);
-  VIEWS.forEach((v, i) => {
+  const order = viewOrder(), at = order.indexOf(ui.view);
+  order.forEach((v, i) => {
     const el = $(`#${v}`);
     el.classList.toggle('active', i === at);
     el.dataset.rel = Math.sign(i - at);
   });
-  $('#tabs').replaceChildren(...VIEWS.map((v) => h('button', { class: ui.view === v ? 'on' : '', onclick: () => switchView(v) }, LABEL[v])));
+  $('#tabs').replaceChildren(...order.map((v) => {
+    const b = h('button', { class: ui.view === v ? 'on' : '', 'data-v': v, draggable: 'true', onclick: () => switchView(v) }, LABEL[v]);
+    b.addEventListener('dragstart', (e) => { ui.dragTab = v; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', v); setTimeout(() => b.classList.add('dragging'), 0); });
+    b.addEventListener('dragend', () => { ui.dragTab = null; syncShell(); });
+    return b;
+  }));
   $('#title').textContent = LABEL[ui.view];
-  if (typeof applyOpacity === 'function' && $('#op')) { $('#op').value = state.settings.opacity[ui.view]; $('#opv').textContent = `${state.settings.opacity[ui.view]}%`; }
-  const prev = VIEWS[(at + VIEWS.length - 1) % VIEWS.length], next = VIEWS[(at + 1) % VIEWS.length];
+  if ($('#op')) { $('#op').value = state.settings.opacity[ui.view]; $('#opv').textContent = `${state.settings.opacity[ui.view]}%`; }
+  const prev = order[(at + order.length - 1) % order.length], next = order[(at + 1) % order.length];
   $('#arrow-l').replaceChildren(h('div', { class: 'pill' }, h('span', { html: ICON.left }), h('span', {}, LABEL[prev])));
   $('#arrow-r').replaceChildren(h('div', { class: 'pill' }, h('span', { html: ICON.right }), h('span', {}, LABEL[next])));
   $('#arrow-l').onclick = () => switchView(prev);
   $('#arrow-r').onclick = () => switchView(next);
 }
+// drag tabs to reorder; arrow mode follows the same order
+$('#tabs').addEventListener('dragover', (e) => {
+  if (!ui.dragTab) return;
+  e.preventDefault();
+  const tabs = [...$('#tabs').children].filter((b) => b.dataset.v !== ui.dragTab);
+  tabs.forEach((b) => b.classList.remove('drop-before', 'drop-after'));
+  let best = null, bd = Infinity;
+  for (const b of tabs) { const r = b.getBoundingClientRect(), c = (r.left + r.right) / 2, d = Math.abs(e.clientX - c); if (d < bd) { bd = d; best = { b, after: e.clientX > c }; } }
+  if (best) { best.b.classList.add(best.after ? 'drop-after' : 'drop-before'); ui.tabDrop = { v: best.b.dataset.v, after: best.after }; }
+});
+$('#tabs').addEventListener('drop', (e) => {
+  if (!ui.dragTab || !ui.tabDrop) return;
+  e.preventDefault();
+  const o = viewOrder().filter((v) => v !== ui.dragTab);
+  o.splice(o.indexOf(ui.tabDrop.v) + (ui.tabDrop.after ? 1 : 0), 0, ui.dragTab);
+  state.settings.tabOrder = o; ui.dragTab = null; ui.tabDrop = null;
+  save(); syncShell();
+});
 function applySettings() { syncShell(); applyBackground(); }
 
 function render() {
   renderDaily();
   renderTodo();
   renderStats();
+  renderNotes();
+  renderDiet();
   syncShell();
   const i = ui.editor && $('input.ed');
   if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
@@ -1059,6 +1138,7 @@ function applyOpacity() {
   r.setProperty('--op-task', f(o.daily, 0.82));
   r.setProperty('--op-cat', f(o.todo, 0.5)); r.setProperty('--op-ch', 0.75 + 0.25 * (o.todo / 100)); // headers stay mostly solid
   r.setProperty('--op-graph', f(o.stats, 0.34));
+  r.setProperty('--op-notes', f(o.notes, 0.62)); r.setProperty('--op-diet', f(o.diet, 0.8));
   for (const v of VIEWS) $(`#${v}`).style.setProperty('--op-sh', o[v] / 100);
   $('#op').value = o[ui.view]; $('#opv').textContent = `${o[ui.view]}%`;
 }
@@ -1066,4 +1146,5 @@ $('#op').addEventListener('input', (e) => { state.settings.opacity[ui.view] = +e
 applyOpacity();
 applyBackground();
 render();
+flushSave(); // makes sure the data file exists after an upgrade
 if (ui.view === 'todo') setTimeout(shakeUrgent, 300);
