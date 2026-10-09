@@ -47,7 +47,7 @@ body[data-switcher="arrows"] #title { display: block; }
 .arrow .pill { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px; border-radius: 18px; background: var(--surface); backdrop-filter: blur(8px); box-shadow: var(--shadow); }
 .arrow svg { width: 20px; height: 20px; display: block; }
 .arrow span:last-child { writing-mode: vertical-rl; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-#arrow-l { left: 0; } #arrow-r { right: 0; }
+#arrow-l { left: 8px; } #arrow-r { right: 22px; }
 body[data-switcher="arrows"] .arrow { display: flex; }
 
 
@@ -56,7 +56,7 @@ body[data-switcher="arrows"] .arrow { display: flex; }
 .view { position: absolute; inset: 0; overflow: auto; padding: 8px 20px 52px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .25s; }
 .view[data-rel="-1"] { transform: translateX(-3%); } .view[data-rel="1"] { transform: translateX(3%); }
 .view.active { opacity: 1; pointer-events: auto; transform: none; }
-body[data-switcher="arrows"] .view { padding-inline: 60px; }
+body[data-switcher="arrows"] .view { padding-inline: 76px; }
 
 /* ---------- checkbox ---------- */
 .chk { width: 24px; height: 24px; flex: none; padding: 0; border-radius: 7px; border: 2px solid var(--line-strong); background: transparent; color: transparent; display: grid; place-items: center; transition: background .12s, border-color .12s, opacity .12s; }
@@ -126,7 +126,7 @@ input.ed::placeholder { color: color-mix(in srgb, var(--on) 55%, transparent); }
 .cat-h .ib { color: var(--on); opacity: .85; } .cat-h .ib:hover { color: var(--on); opacity: 1; }
 .cat-list { flex: 1; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 
-.ttask { background: color-mix(in srgb, var(--surface-solid) calc(var(--op-ct, .82) * 100%), transparent); border: 1px solid var(--line); border-radius: 9px; padding: 4px 8px 7px 10px; cursor: text; }
+.ttask { --urg: 0; background: color-mix(in srgb, color-mix(in srgb, #ff4d4d calc(var(--urg) * 72%), var(--surface-solid)) calc(var(--op-ct, .82) * 100%), transparent); border: 1px solid var(--line); border-radius: 9px; padding: 4px 8px 7px 10px; cursor: text; }
 .ttask .dates { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); line-height: 1.5; font-variant-numeric: tabular-nums; gap: 8px; }
 .ttask .trow { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .ttask .tname { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -232,3 +232,21 @@ body[data-switcher="arrows"] #daily { padding-inline: 90px; }
 .lg .katex { font-size: 1em; }
 
 .view { --shadow: 0 1px 2px rgba(0,0,0,calc(var(--sh1) * var(--op-sh, 1))), 0 4px 14px rgba(0,0,0,calc(var(--sh2) * var(--op-sh, 1))); }
+
+.ttask .dates { display: grid; grid-template-columns: 1fr auto 1fr; }
+.ttask .dates span:last-child { text-align: right; }
+.ttask .dates .due { text-align: center; color: color-mix(in srgb, #d22 calc(var(--urg) * 100%), var(--muted)); font-weight: 600; }
+.ttask.shake { animation: shake .5s ease-in-out; }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(calc(var(--amp) * -1)); } 20% { transform: translateX(var(--amp)); }
+  30% { transform: translateX(calc(var(--amp) * -1)); } 40% { transform: translateX(var(--amp)); }
+  55% { transform: translateX(calc(var(--amp) * -.5)); } 70% { transform: translateX(calc(var(--amp) * .5)); }
+}
+.dedit { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 11px; color: var(--muted); }
+.dfield { display: flex; align-items: center; gap: 6px; }
+.dinp, .numinp { font-size: 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--text); padding: 1px 4px; }
+.numinp { width: 64px; padding: 3px 6px; }
+.tname a, .ttl a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+.ttl a { color: inherit; }
+.lg a { pointer-events: none; color: inherit; }

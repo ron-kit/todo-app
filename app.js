@@ -39,7 +39,7 @@ const ICON = {
 
 /* ================= state ================= */
 const DEFAULTS = () => ({
-  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', opacity: { daily: 55, todo: 55, stats: 55 }, statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
+  settings: { open: 'daily', weekStart: 'mon', allDays: false, switcher: 'tabs', interp: 'linear', alertDays: 7, opacity: { daily: 55, todo: 55, stats: 55 }, statsMode: 'pct', statsGran: 'week', statsRange: 1, bg: { type: 'default' } },
   daily: { tasks: [], checks: {} },
   todo: { cats: [], layout: null },
 });
@@ -151,12 +151,16 @@ function renderText(src) {
     try { return keep(katex.renderToString(tex, { displayMode: block != null, throwOnError: false })); }
     catch { return keep(esc(m)); }
   });
+  s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_, text, url) =>
+    keep(`<a href="${esc(url).replace(/"/g, '%22')}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`));
   s = esc(s)
     .replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>')
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>')
     .replace(/~~(.+?)~~/g, '<s>$1</s>');
-  return s.replace(/(\d+)/g, (_, i) => stash[i]);
+  // restore stashed pieces (link text may itself contain stashed math/code)
+  for (let i = 0; i < 3 && //.test(s); i++) s = s.replace(/(\d+)/g, (_, n) => stash[n]);
+  return s;
 }
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -177,11 +181,12 @@ function cancelEditor() { ui.editor = null; render(); }
 function editorInput(draft) {
   const i = h('input', { class: 'ed', type: 'text', value: draft.name, placeholder: 'Task name', spellcheck: 'false', maxlength: '200' });
   i.addEventListener('input', () => { draft.name = i.value; });
-  i.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); commitEditor(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); cancelEditor(); }
-  });
+  i.addEventListener('keydown', onEditorKey);
   return i;
+}
+function onEditorKey(e) {
+  if (e.key === 'Enter') { e.preventDefault(); commitEditor(true); }
+  else if (e.key === 'Escape') { e.preventDefault(); cancelEditor(); }
 }
 // toggles keep focus in the text input so Enter always confirms
 const keepFocus = (e) => e.preventDefault();
@@ -243,7 +248,7 @@ function dailyRow(t, cols) {
   const name = h('div', {
     class: 'dname',
     onclick: (e) => {
-      if (e.target.closest('button')) return;
+      if (e.target.closest('button,a')) return;
       openEditor({ kind: 'daily', id: t.id, draft: { name: t.name, days: t.days.slice(), color: t.color }, apply(n) { t.name = n; t.days = this.draft.days.slice(); t.color = this.draft.color; } });
     },
   },
@@ -402,7 +407,7 @@ function renderTodo() {
   board.addEventListener('dragleave', (e) => { if (!board.contains(e.relatedTarget)) hideOverlay(); });
   ui.board = board;
   ui.overlay = null;
-  $('#todo').replaceChildren(board);
+  $('#todo').replaceChildren(board, todoAvgStrip());
 }
 
 function renderNode(n) {
@@ -532,15 +537,31 @@ function tile(cat) {
   el.append(head, h('div', { class: 'cat-list' },
     cat.tasks.map((t) => (ed?.kind === 'todo' && ed.id === t.id ? todoEditor(ed) : todoTask(cat, t))),
     adding ? todoEditor(ed)
-      : plusButton('small', 'Add task', () => openEditor({ kind: 'todo', id: 'new', cat: cat.id, fallback: () => `Task #${cat.tasks.length + 1}`, draft: { name: '', done: false }, apply(name) {
-        cat.tasks.push(makeTask(name, this.draft.done));
+      : plusButton('small', 'Add task', () => openEditor({ kind: 'todo', id: 'new', cat: cat.id, fallback: () => `Task #${cat.tasks.length + 1}`, draft: { name: '', done: false, created: isoDate(new Date()), deadline: '' }, apply(name) {
+        const d = this.draft;
+        cat.tasks.push(makeTask(name, d.done, d.created && d.created !== isoDate(new Date()) ? dateToIso(d.created) : null, d.deadline));
       } }))));
   return el;
 }
 
-function makeTask(name, done) {
+const localDate = (v) => isoDate(new Date(v));
+const dateToIso = (d) => new Date(`${d}T12:00:00`).toISOString();
+function makeTask(name, done, created, deadline) {
   const now = new Date().toISOString();
-  return { id: uid(), name, done: !!done, created: now, completed: done ? now : null };
+  return { id: uid(), name, done: !!done, created: created || now, completed: done ? now : null, deadline: deadline || null };
+}
+// 0 = no alert yet, 1 = at/after the deadline; ramps up over the last `alertDays` days.
+function urgency(t) {
+  if (!t.deadline || t.done) return 0;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const left = Math.round((new Date(`${t.deadline}T00:00:00`) - today) / 864e5), n = state.settings.alertDays;
+  if (left <= 0) return 1;
+  return left >= n ? 0 : (n - left) / n;
+}
+function shakeUrgent() {
+  document.querySelectorAll('#todo .ttask.urgent').forEach((el) => {
+    el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake');
+  });
 }
 function setDone(t, done) {
   if (done === t.done) return;
@@ -571,19 +592,26 @@ function moveTodoTask(from, to, id, targetId, after) {
   save(); render();
 }
 function todoTaskEl(cat, t) {
+  const urg = urgency(t);
   return h('div', {
-    class: `ttask ${t.done ? 'done' : ''}`,
+    class: `ttask ${t.done ? 'done' : ''} ${urg ? 'urgent' : ''}`,
+    vars: { '--urg': urg, '--amp': `${(1 + 4 * urg).toFixed(2)}px` },
     onclick: (e) => {
-      if (e.target.closest('button')) return;
-      openEditor({ kind: 'todo', id: t.id, cat: cat.id, draft: { name: t.name, done: t.done }, apply(n) { t.name = n; setDone(t, this.draft.done); } });
+      if (e.target.closest('button,a')) return;
+      openEditor({ kind: 'todo', id: t.id, cat: cat.id, draft: { name: t.name, done: t.done, created: localDate(t.created), deadline: t.deadline || '' }, apply(n) {
+        const d = this.draft;
+        t.name = n; setDone(t, d.done);
+        if (d.created && d.created !== localDate(t.created)) t.created = dateToIso(d.created);
+        t.deadline = d.deadline || null;
+      } });
     },
   },
-  h('div', { class: 'dates' }, h('span', {}, fmtDate(t.created)), h('span', {}, t.completed ? fmtDate(t.completed) : '')),
+  h('div', { class: 'dates' }, h('span', {}, fmtDate(t.created)), h('span', { class: 'due' }, t.deadline ? `Due ${fmtDate(`${t.deadline}T00:00:00`)}` : ''), h('span', {}, t.completed ? fmtDate(t.completed) : '')),
   h('div', { class: 'trow' },
     checkbox(t.done, () => { setDone(t, !t.done); save(); render(); }),
     h('div', { class: 'tname', html: renderText(t.name) }),
     actions(() => {
-      cat.tasks.splice(cat.tasks.indexOf(t) + 1, 0, makeTask(t.name, false));
+      cat.tasks.splice(cat.tasks.indexOf(t) + 1, 0, makeTask(t.name, false, null, t.deadline));
       save(); render();
     }, () => { cat.tasks = cat.tasks.filter((x) => x !== t); save(); render(); })));
 }
@@ -593,7 +621,15 @@ function todoEditor(ed) {
   const box = checkbox(ed.draft.done, () => { ed.draft.done = !ed.draft.done; box.classList.toggle('on', ed.draft.done); }, 'ghost');
   box.tabIndex = -1;
   box.addEventListener('mousedown', keepFocus);
-  const el = h('div', { class: 'ttask editor' }, h('div', { class: 'trow' }, box, input));
+  const field = (label, key) => {
+    const i = h('input', { type: 'date', class: 'dinp', value: ed.draft[key] });
+    i.addEventListener('input', () => { ed.draft[key] = i.value; });
+    i.addEventListener('keydown', onEditorKey);
+    return h('label', { class: 'dfield' }, label, i,
+      key === 'deadline' ? h('button', { class: 'ib', title: 'Clear deadline', html: ICON.x, onclick: () => { ed.draft.deadline = ''; i.value = ''; } }) : null);
+  };
+  const el = h('div', { class: 'ttask editor' }, h('div', { class: 'trow' }, box, input),
+    h('div', { class: 'dedit' }, field('Created', 'created'), field('Deadline', 'deadline')));
   ed.el = el;
   return el;
 }
@@ -685,6 +721,8 @@ function syncPop() {
       row.querySelectorAll('.pick').forEach((b, i) => b.classList.toggle('sel', i === idx));
     }
   }
+  const ni = $('#pop .numinp');
+  if (ni && document.activeElement !== ni) ni.value = state.settings.alertDays;
   const bg = state.settings.bg;
   const isColor = (v) => bg.type === 'color' && bg.value === v;
   $('#pop .bgrow').replaceChildren(
@@ -713,6 +751,9 @@ function buildPop() {
   };
   $('#pop').replaceChildren(
     ...SETTINGS.map((s) => h('div', { class: 'srow', 'data-key': s.key }, h('span', { class: 'sl' }, s.title), control(s))),
+    h('div', { class: 'srow' }, h('span', { class: 'sl' }, 'Days before alert'),
+      h('input', { class: 'numinp', type: 'number', min: '0', step: '1', title: 'Todo tasks start turning red this many days before their deadline',
+        oninput: (e) => { const n = parseInt(e.target.value, 10); if (n >= 0) setSetting('alertDays', n); } })),
     h('div', { class: 'srow col' }, h('span', { class: 'sl' }, 'Background'), h('div', { class: 'bgrow' }), h('div', { class: 'bgcols', hidden: true })),
     h('div', { class: 'note' }, 'Task names support Markdown and LaTeX.'));
   syncPop();
@@ -827,7 +868,6 @@ function todoAvgStrip() {
   const fmt = (v) => (v == null ? '–' : `${Math.round(v * 10) / 10}d`);
   const chip = (label, v, color) => h('div', { class: 'tchip', title: `Average days to complete: ${label}`, vars: color ? { '--c': color } : {} }, h('span', {}, label), h('b', {}, fmt(v)));
   return h('div', { class: 'tstats' },
-    h('span', { class: 'tlabel' }, 'Todo · avg days to finish'),
     chip('All', avg(state.todo.cats.flatMap((c) => c.tasks))),
     state.todo.cats.map((c) => chip(c.name, avg(c.tasks), c.color)));
 }
@@ -863,8 +903,7 @@ function renderStats() {
         h('button', { class: 'today-btn', style: { visibility: ui.statsOffset ? 'visible' : 'hidden' }, onclick: () => { ui.statsOffset = 0; renderStats(); } }, 'Today'),
         h('div', { class: 'sw' }, h('span', { class: `opt ${mode ? 'cur' : ''}` }, 'Percent'), track, h('span', { class: `opt ${mode ? '' : 'cur'}` }, 'Count'))),
       h('div', { class: 'sc-chart' }, arrow(-1), chart, arrow(1)),
-      legend),
-    todoAvgStrip());
+      legend));
   ui.statsRO?.disconnect();
   ui.statsRO = new ResizeObserver(() => drawChart(chart));
   ui.statsRO.observe(chart);
@@ -960,8 +999,10 @@ const VIEWS = ['daily', 'todo', 'stats'];
 const LABEL = { daily: 'Daily', todo: 'Todo', stats: 'Stats' };
 function switchView(v) {
   if (ui.editor) commitEditor();
+  const opening = v === 'todo' && ui.view !== 'todo';
   ui.view = v;
   syncShell();
+  if (opening) setTimeout(shakeUrgent, 150);
 }
 function syncShell() {
   document.body.dataset.switcher = state.settings.switcher;
@@ -1025,3 +1066,4 @@ $('#op').addEventListener('input', (e) => { state.settings.opacity[ui.view] = +e
 applyOpacity();
 applyBackground();
 render();
+if (ui.view === 'todo') setTimeout(shakeUrgent, 300);

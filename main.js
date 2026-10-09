@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, nativeTheme, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, nativeTheme, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -17,6 +17,10 @@ function createWindow() {
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') },
   });
   win.loadFile('index.html');
+  // Links in task names open in the default browser, never inside the app.
+  const external = (url) => { if (/^https?:\/\//i.test(url)) shell.openExternal(url); };
+  win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (url !== win.webContents.getURL()) { e.preventDefault(); external(url); } });
 }
 
 // Copies the chosen image into userData so it survives the original moving.
